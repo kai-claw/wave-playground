@@ -1,0 +1,218 @@
+export interface WaveSource {
+  x: number;
+  y: number;
+  frequency: number;
+  amplitude: number;
+  phase: number;
+  active: boolean;
+  vx?: number; // velocity for Doppler effect
+  vy?: number;
+}
+
+export interface Wall {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  slits?: Array<{ start: number; end: number }>; // positions along the wall
+}
+
+export class WaveSimulation {
+  width: number;
+  height: number;
+  cellSize: number;
+  cols: number;
+  rows: number;
+  
+  // Wave field data
+  current: Float32Array;
+  previous: Float32Array;
+  velocity: Float32Array;
+  
+  // Simulation parameters
+  waveSpeed: number = 0.5;
+  damping: number = 0.995;
+  dt: number = 1.0;
+  
+  sources: WaveSource[] = [];
+  walls: Wall[] = [];
+  reflectiveBoundaries: boolean = false;
+  
+  constructor(width: number, height: number, cellSize: number = 4) {
+    this.width = width;
+    this.height = height;
+    this.cellSize = cellSize;
+    this.cols = Math.ceil(width / cellSize);
+    this.rows = Math.ceil(height / cellSize);
+    
+    const size = this.cols * this.rows;
+    this.current = new Float32Array(size);
+    this.previous = new Float32Array(size);
+    this.velocity = new Float32Array(size);
+  }
+  
+  getIndex(x: number, y: number): number {
+    return y * this.cols + x;
+  }
+  
+  addSource(x: number, y: number, frequency: number = 0.05, amplitude: number = 1): void {
+    this.sources.push({
+      x: x / this.cellSize,
+      y: y / this.cellSize,
+      frequency,
+      amplitude,
+      phase: 0,
+      active: true
+    });
+  }
+  
+  addWall(x1: number, y1: number, x2: number, y2: number, slits?: Array<{ start: number; end: number }>): void {
+    this.walls.push({
+      x1: x1 / this.cellSize,
+      y1: y1 / this.cellSize,
+      x2: x2 / this.cellSize,
+      y2: y2 / this.cellSize,
+      slits
+    });
+  }
+  
+  clear(): void {
+    this.current.fill(0);
+    this.previous.fill(0);
+    this.velocity.fill(0);
+    this.sources = [];
+    this.walls = [];
+  }
+  
+  step(time: number): void {
+    const c2 = this.waveSpeed * this.waveSpeed;
+    const dt2 = this.dt * this.dt;
+    
+    // Add wave sources
+    for (const source of this.sources) {
+      if (!source.active) continue;
+      
+      const sx = Math.round(source.x);
+      const sy = Math.round(source.y);
+      
+      if (sx >= 0 && sx < this.cols && sy >= 0 && sy < this.rows) {
+        const idx = this.getIndex(sx, sy);
+        const freq = source.frequency + (source.vx || 0) * 0.001; // Simple Doppler
+        this.current[idx] += source.amplitude * Math.sin(time * freq + source.phase);
+      }
+      
+      // Update source position for Doppler effect
+      if (source.vx) source.x += source.vx * this.dt;
+      if (source.vy) source.y += source.vy * this.dt;
+    }
+    
+    // Wave equation: u_tt = c²∇²u
+    for (let y = 1; y < this.rows - 1; y++) {
+      for (let x = 1; x < this.cols - 1; x++) {
+        const idx = this.getIndex(x, y);
+        
+        // Check if we're inside a wall
+        if (this.isInsideWall(x, y)) {
+          this.current[idx] = 0;
+          this.previous[idx] = 0;
+          continue;
+        }
+        
+        // Laplacian (discrete)
+        const laplacian = (
+          this.current[this.getIndex(x + 1, y)] +
+          this.current[this.getIndex(x - 1, y)] +
+          this.current[this.getIndex(x, y + 1)] +
+          this.current[this.getIndex(x, y - 1)] -
+          4 * this.current[idx]
+        );
+        
+        // Wave equation
+        const newValue = 2 * this.current[idx] - this.previous[idx] + c2 * dt2 * laplacian;
+        this.previous[idx] = this.current[idx];
+        this.current[idx] = newValue * this.damping;
+      }
+    }
+    
+    // Boundary conditions
+    this.applyBoundaryConditions();
+  }
+  
+  private isInsideWall(x: number, y: number): boolean {
+    for (const wall of this.walls) {
+      if (this.isPointOnWall(x, y, wall)) {
+        // Check if point is in a slit
+        if (wall.slits) {
+          const t = this.getParametricPosition(x, y, wall);
+          for (const slit of wall.slits) {
+            if (t >= slit.start && t <= slit.end) {
+              return false; // Inside slit, not blocked
+            }
+          }
+        }
+        return true; // Inside wall, blocked
+      }
+    }
+    return false;
+  }
+  
+  private isPointOnWall(x: number, y: number, wall: Wall): boolean {
+    const distance = this.distanceToLine(x, y, wall.x1, wall.y1, wall.x2, wall.y2);
+    return distance < 0.7; // Tolerance for wall thickness
+  }
+  
+  private distanceToLine(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    
+    if (len2 === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
+    
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+    const projection = { x: x1 + t * dx, y: y1 + t * dy };
+    return Math.sqrt((px - projection.x) ** 2 + (py - projection.y) ** 2);
+  }
+  
+  private getParametricPosition(x: number, y: number, wall: Wall): number {
+    const dx = wall.x2 - wall.x1;
+    const dy = wall.y2 - wall.y1;
+    const len2 = dx * dx + dy * dy;
+    
+    if (len2 === 0) return 0;
+    
+    return ((x - wall.x1) * dx + (y - wall.y1) * dy) / len2;
+  }
+  
+  private applyBoundaryConditions(): void {
+    if (this.reflectiveBoundaries) {
+      // Reflective boundaries
+      for (let x = 0; x < this.cols; x++) {
+        this.current[this.getIndex(x, 0)] = this.current[this.getIndex(x, 1)];
+        this.current[this.getIndex(x, this.rows - 1)] = this.current[this.getIndex(x, this.rows - 2)];
+      }
+      for (let y = 0; y < this.rows; y++) {
+        this.current[this.getIndex(0, y)] = this.current[this.getIndex(1, y)];
+        this.current[this.getIndex(this.cols - 1, y)] = this.current[this.getIndex(this.cols - 2, y)];
+      }
+    } else {
+      // Absorbing boundaries
+      for (let x = 0; x < this.cols; x++) {
+        this.current[this.getIndex(x, 0)] = 0;
+        this.current[this.getIndex(x, this.rows - 1)] = 0;
+      }
+      for (let y = 0; y < this.rows; y++) {
+        this.current[this.getIndex(0, y)] = 0;
+        this.current[this.getIndex(this.cols - 1, y)] = 0;
+      }
+    }
+  }
+  
+  getValue(x: number, y: number): number {
+    const gx = Math.floor(x / this.cellSize);
+    const gy = Math.floor(y / this.cellSize);
+    
+    if (gx < 0 || gx >= this.cols || gy < 0 || gy >= this.rows) return 0;
+    
+    return this.current[this.getIndex(gx, gy)];
+  }
+}
