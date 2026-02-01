@@ -1,73 +1,86 @@
-# React + TypeScript + Vite
+# 🌊 Wave Playground
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Interactive wave physics simulator built with React + Canvas. Drop wave sources, watch interference patterns form, explore slit diffraction and the Doppler effect — all in real time.
 
-Currently, two official plugins are available:
+**[▶ Live Demo](https://kai-claw.github.io/wave-playground/)**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+![Wave Playground](https://img.shields.io/badge/React-19-61DAFB?logo=react) ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript) ![License](https://img.shields.io/badge/license-MIT-green)
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## ✨ Features
 
-## Expanding the ESLint configuration
+- **Click to create wave sources** — drop point sources anywhere on the canvas
+- **Drag sources for Doppler effect** — moving sources shift frequency in real time
+- **2D Heatmap view** — color-coded amplitude visualization
+- **3D Isometric surface view** — height-mapped terrain showing wave displacement
+- **Slit diffraction presets** — single slit, double slit with visible interference fringes
+- **Standing waves** — toggle reflective boundaries to see resonance patterns
+- **6 built-in presets** — Double Slit, Single Slit, Ripple Tank, Two Sources, Standing Waves, Corner Reflector
+- **4 color schemes** — Ocean, Thermal, Neon, Grayscale
+- **Full parameter control** — wavelength, amplitude, speed, damping
+- **Responsive canvas** — fills available space, works on desktop and mobile
+- **Right-click to remove** sources
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🚀 Getting Started
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+```bash
+# Clone
+git clone https://github.com/kai-claw/wave-playground.git
+cd wave-playground
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+# Install
+npm install
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# Dev server
+npm run dev
+
+# Production build
+npm run build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## 🔬 Physics
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+The simulation solves the 2D wave equation using finite differences:
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
 ```
+∂²u/∂t² = c² ∇²u
+```
+
+Where:
+- `u(x,y,t)` is the wave displacement field
+- `c` is the wave speed
+- `∇²` is the discrete Laplacian (4-point stencil)
+
+Walls use a mask-based approach — grid cells inside walls are clamped to zero. Slits are openings in the mask where waves can propagate through.
+
+The Doppler effect emerges naturally when you drag a source — the source's velocity modulates the effective frequency at each emission point.
+
+## 🎮 Controls
+
+| Action | Effect |
+|--------|--------|
+| Click canvas | Add a wave source |
+| Drag a source | Move it (Doppler effect) |
+| Right-click | Remove nearest source |
+| Wavelength slider | Set source wavelength |
+| Amplitude slider | Set source strength |
+| Speed slider | Wave propagation speed |
+| Damping slider | Energy loss per step |
+| Reflective Boundaries | Toggle absorbing ↔ reflective edges |
+| View Mode | Switch between 2D heatmap and 3D surface |
+
+## 🏗️ Tech Stack
+
+- **React 19** + TypeScript
+- **Canvas 2D** rendering (no WebGL dependency)
+- **Vite** build tooling
+- **Custom wave engine** — `Float32Array`-backed simulation grid
+
+## 📄 License
+
+MIT
+
+---
+
+Built by [kai-claw](https://github.com/kai-claw)
