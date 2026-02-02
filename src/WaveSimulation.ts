@@ -243,6 +243,42 @@ export class WaveSimulation {
     }
   }
   
+  /** Apply a one-shot gaussian impulse — creates a perfect expanding ring */
+  applyImpulse(pixelX: number, pixelY: number, radius: number = 8, amplitude: number = 3): void {
+    const cx = Math.floor(pixelX / this.cellSize);
+    const cy = Math.floor(pixelY / this.cellSize);
+    const r = Math.ceil(radius / this.cellSize);
+    const sigma = r * 0.5;
+    const sigma2 = sigma * sigma;
+
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        const gx = cx + dx;
+        const gy = cy + dy;
+        if (gx < 1 || gx >= this.cols - 1 || gy < 1 || gy >= this.rows - 1) continue;
+
+        const dist2 = dx * dx + dy * dy;
+        if (dist2 > r * r) continue;
+
+        const gaussian = amplitude * Math.exp(-dist2 / (2 * sigma2));
+        const idx = this.getIndex(gx, gy);
+        this.current[idx] += gaussian;
+      }
+    }
+  }
+
+  /** Sample wave amplitude along a line from (x1,y1) to (x2,y2) in pixel coords */
+  sampleLine(px1: number, py1: number, px2: number, py2: number, numSamples: number = 128): Float32Array {
+    const samples = new Float32Array(numSamples);
+    for (let i = 0; i < numSamples; i++) {
+      const t = i / (numSamples - 1);
+      const x = px1 + (px2 - px1) * t;
+      const y = py1 + (py2 - py1) * t;
+      samples[i] = this.getValue(x, y);
+    }
+    return samples;
+  }
+
   getValue(x: number, y: number): number {
     const gx = Math.floor(x / this.cellSize);
     const gy = Math.floor(y / this.cellSize);

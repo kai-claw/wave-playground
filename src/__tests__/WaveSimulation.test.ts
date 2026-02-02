@@ -385,4 +385,94 @@ describe('WaveSimulation', () => {
       expect(true).toBe(true);
     });
   });
+
+  // ── Impulse mode ──
+  describe('applyImpulse', () => {
+    it('creates a gaussian pulse centered at the given point', () => {
+      sim.applyImpulse(100, 100, 20, 3);
+      // Center should have highest value
+      const center = sim.getValue(100, 100);
+      expect(center).toBeGreaterThan(0);
+      // Edge should be lower than center
+      const edge = sim.getValue(116, 100);
+      expect(Math.abs(edge)).toBeLessThan(Math.abs(center));
+    });
+
+    it('impulse propagates outward when stepped', () => {
+      sim.applyImpulse(100, 100, 16, 2);
+      const centerBefore = sim.getValue(100, 100);
+      expect(centerBefore).toBeGreaterThan(0);
+
+      // Step forward — energy spreads outward
+      for (let i = 0; i < 20; i++) sim.step(i);
+      const farValue = sim.getValue(140, 100);
+      expect(Math.abs(farValue)).toBeGreaterThan(0);
+    });
+
+    it('out-of-bounds impulse does not crash', () => {
+      sim.applyImpulse(-50, -50, 20, 3);
+      sim.applyImpulse(9999, 9999, 20, 3);
+      expect(true).toBe(true);
+    });
+
+    it('multiple impulses create interference', () => {
+      sim.applyImpulse(90, 100, 30, 2);
+      sim.applyImpulse(110, 100, 30, 2);
+      // Both impulses overlap at midpoint — constructive interference
+      const mid = sim.getValue(100, 100);
+      const src1 = sim.getValue(90, 100);
+      expect(Math.abs(mid)).toBeGreaterThan(0);
+      expect(Math.abs(src1)).toBeGreaterThan(0);
+      // Midpoint should be greater or equal than single source (constructive)
+      expect(Math.abs(mid)).toBeGreaterThanOrEqual(Math.abs(src1) * 0.5);
+    });
+  });
+
+  // ── Sample line (probe) ──
+  describe('sampleLine', () => {
+    it('returns correct number of samples', () => {
+      const samples = sim.sampleLine(0, 100, 200, 100, 64);
+      expect(samples.length).toBe(64);
+    });
+
+    it('samples reflect wave field values', () => {
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 30; i++) sim.step(i);
+
+      const samples = sim.sampleLine(0, 100, 200, 100, 128);
+      // Should have non-zero values near the source
+      let hasNonZero = false;
+      for (let i = 0; i < samples.length; i++) {
+        if (Math.abs(samples[i]) > 0.01) { hasNonZero = true; break; }
+      }
+      expect(hasNonZero).toBe(true);
+    });
+
+    it('returns zeros on empty field', () => {
+      const samples = sim.sampleLine(0, 100, 200, 100, 32);
+      for (let i = 0; i < samples.length; i++) {
+        expect(samples[i]).toBe(0);
+      }
+    });
+
+    it('handles vertical lines', () => {
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 30; i++) sim.step(i);
+      const samples = sim.sampleLine(100, 0, 100, 200, 64);
+      expect(samples.length).toBe(64);
+    });
+
+    it('handles diagonal lines', () => {
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 30; i++) sim.step(i);
+      const samples = sim.sampleLine(0, 0, 200, 200, 64);
+      expect(samples.length).toBe(64);
+      // Should have non-zero values near center
+      let hasNonZero = false;
+      for (let i = 0; i < samples.length; i++) {
+        if (Math.abs(samples[i]) > 0.01) { hasNonZero = true; break; }
+      }
+      expect(hasNonZero).toBe(true);
+    });
+  });
 });

@@ -39,6 +39,13 @@ class ErrorBoundary extends React.Component<
   }
 }
 
+type InteractionMode = 'source' | 'impulse' | 'draw';
+
+interface ProbeLine {
+  x1: number; y1: number;
+  x2: number; y2: number;
+}
+
 interface Controls {
   wavelength: number;
   amplitude: number;
@@ -48,6 +55,7 @@ interface Controls {
   reflectiveBoundaries: boolean;
   visualMode: '2D' | '3D';
   colorScheme: 'ocean' | 'thermal' | 'neon' | 'grayscale';
+  interactionMode: InteractionMode;
 }
 
 const COLOR_SCHEMES = {
@@ -120,6 +128,23 @@ const PRESETS: Record<string, PresetDef> = {
     sources: [{ x: 0.4375, y: 0.417 }],
     description: 'Waves reflecting off an L-shaped barrier',
   },
+  'Triple Source': {
+    walls: [],
+    sources: [
+      { x: 0.5, y: 0.25 },
+      { x: 0.33, y: 0.67 },
+      { x: 0.67, y: 0.67 },
+    ],
+    description: 'Three coherent sources in a triangle — complex Moiré-like interference',
+  },
+  'Waveguide': {
+    walls: [
+      { x1: 0, y1: 0.35, x2: 0.8, y2: 0.35 },
+      { x1: 0, y1: 0.65, x2: 0.8, y2: 0.65 },
+    ],
+    sources: [{ x: 0.05, y: 0.5 }],
+    description: 'Waves channeled through a corridor — observe waveguide modes',
+  },
 };
 
 function App() {
@@ -141,6 +166,7 @@ function App() {
     reflectiveBoundaries: false,
     visualMode: '2D',
     colorScheme: 'ocean',
+    interactionMode: 'source',
   });
 
   const [showControls, setShowControls] = useState(true);
@@ -148,6 +174,15 @@ function App() {
   const [sourceCount, setSourceCount] = useState(0);
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [showHelp, setShowHelp] = useState(true);
+
+  // Drawing mode state
+  const drawPointsRef = useRef<Array<{x: number; y: number}>>([]);
+  const isDrawingRef = useRef(false);
+
+  // Probe line state
+  const [probeLine, setProbeLine] = useState<ProbeLine | null>(null);
+  const isPlacingProbeRef = useRef(false);
+  const probeStartRef = useRef<{x: number; y: number} | null>(null);
 
   // ──────── Responsive canvas ────────
   const resizeCanvas = useCallback(() => {
@@ -405,14 +440,135 @@ function App() {
       }
     });
 
-    // HUD — source count
+    // Draw paint trail preview during drawing
+    if (isDrawingRef.current && drawPointsRef.current.length > 1) {
+      ctx.strokeStyle = 'rgba(79, 195, 247, 0.6)';
+      ctx.lineWidth = 3;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      const pts = drawPointsRef.current;
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.stroke();
+
+      // Glow on paint trail
+      ctx.strokeStyle = 'rgba(79, 195, 247, 0.15)';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) {
+        ctx.lineTo(pts[i].x, pts[i].y);
+      }
+      ctx.stroke();
+    }
+
+    // Draw probe line and waveform
+    if (probeLine) {
+      const { x1, y1, x2, y2 } = probeLine;
+
+      // Probe line with glow
+      ctx.strokeStyle = 'rgba(255, 200, 50, 0.3)';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+
+      ctx.strokeStyle = 'rgba(255, 200, 50, 0.9)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Endpoint markers
+      [{ x: x1, y: y1 }, { x: x2, y: y2 }].forEach(pt => {
+        ctx.fillStyle = 'rgba(255, 200, 50, 0.9)';
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Sample and draw waveform overlay
+      const samples = sim.sampleLine(x1, y1, x2, y2, 128);
+      const chartW = 200;
+      const chartH = 80;
+      // Position chart near midpoint of line
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+      const chartX = Math.min(w - chartW - 10, Math.max(10, midX - chartW / 2));
+      const chartY = Math.min(h - chartH - 10, Math.max(10, midY - chartH - 20));
+
+      // Background
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+      ctx.strokeStyle = 'rgba(255, 200, 50, 0.4)';
+      ctx.lineWidth = 1;
+      const borderR = 8;
+      ctx.beginPath();
+      ctx.roundRect(chartX - 4, chartY - 4, chartW + 8, chartH + 8, borderR);
+      ctx.fill();
+      ctx.stroke();
+
+      // Zero line
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(chartX, chartY + chartH / 2);
+      ctx.lineTo(chartX + chartW, chartY + chartH / 2);
+      ctx.stroke();
+
+      // Waveform
+      ctx.strokeStyle = 'rgba(255, 200, 50, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      let maxAbs = 0;
+      for (let i = 0; i < samples.length; i++) {
+        const a = Math.abs(samples[i]);
+        if (a > maxAbs) maxAbs = a;
+      }
+      const scale = maxAbs > 0.01 ? (chartH * 0.4) / maxAbs : 1;
+
+      for (let i = 0; i < samples.length; i++) {
+        const sx = chartX + (i / (samples.length - 1)) * chartW;
+        const sy = chartY + chartH / 2 - samples[i] * scale;
+        if (i === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+
+      // Filled area under waveform
+      ctx.fillStyle = 'rgba(255, 200, 50, 0.1)';
+      ctx.beginPath();
+      ctx.moveTo(chartX, chartY + chartH / 2);
+      for (let i = 0; i < samples.length; i++) {
+        const sx = chartX + (i / (samples.length - 1)) * chartW;
+        const sy = chartY + chartH / 2 - samples[i] * scale;
+        ctx.lineTo(sx, sy);
+      }
+      ctx.lineTo(chartX + chartW, chartY + chartH / 2);
+      ctx.closePath();
+      ctx.fill();
+
+      // Label
+      ctx.fillStyle = 'rgba(255, 200, 50, 0.7)';
+      ctx.font = '10px monospace';
+      ctx.fillText('PROBE', chartX + 4, chartY + 12);
+    }
+
+    // HUD — source count + mode
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(8, 8, 120, 28);
+    ctx.fillRect(8, 8, 160, 28);
     ctx.fillStyle = '#4fc3f7';
     ctx.font = '12px monospace';
-    ctx.fillText(`Sources: ${sim.sources.length}`, 16, 26);
+    const modeLabel = controls.interactionMode === 'impulse' ? '💧' : controls.interactionMode === 'draw' ? '🖌️' : '🔵';
+    ctx.fillText(`${modeLabel} Sources: ${sim.sources.length}`, 16, 26);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controls.visualMode, controls.colorScheme]);
+  }, [controls.visualMode, controls.colorScheme, controls.interactionMode, probeLine]);
 
   // ──────── Animation loop ────────
   useEffect(() => {
@@ -452,21 +608,11 @@ function App() {
 
     const { x, y } = getCanvasCoords(e);
 
-    // Check if clicking on a source
-    for (let i = 0; i < sim.sources.length; i++) {
-      const source = sim.sources[i];
-      const sx = source.x * sim.cellSize;
-      const sy = source.y * sim.cellSize;
-      if (Math.hypot(x - sx, y - sy) < 14) {
-        isDraggingRef.current = true;
-        dragSourceRef.current = i;
-        return;
-      }
-    }
-
-    // Right-click removes nearest source
+    // Right-click removes nearest source (all modes)
     if (e.button === 2) {
       e.preventDefault();
+      // Also clear probe if right-clicking
+      setProbeLine(null);
       let minDist = Infinity;
       let minIdx = -1;
       sim.sources.forEach((s, i) => {
@@ -480,27 +626,83 @@ function App() {
       return;
     }
 
-    // Otherwise add source
-    const frequency = 2 * Math.PI / controls.wavelength;
-    sim.addSource(x, y, frequency, controls.amplitude);
-    setSourceCount(sim.sources.length);
-    setShowHelp(false);
-  }, [controls.wavelength, controls.amplitude]);
+    // Check if clicking on a source to drag (all modes)
+    for (let i = 0; i < sim.sources.length; i++) {
+      const source = sim.sources[i];
+      const sx = source.x * sim.cellSize;
+      const sy = source.y * sim.cellSize;
+      if (Math.hypot(x - sx, y - sy) < 14) {
+        isDraggingRef.current = true;
+        dragSourceRef.current = i;
+        return;
+      }
+    }
+
+    // Probe line placement takes priority
+    if (isPlacingProbeRef.current) {
+      if (!probeStartRef.current) {
+        probeStartRef.current = { x, y };
+        setProbeLine({ x1: x, y1: y, x2: x, y2: y });
+      }
+      return;
+    }
+
+    const mode = controls.interactionMode;
+
+    if (mode === 'impulse') {
+      // Drop a splash impulse
+      sim.applyImpulse(x, y, 30, controls.amplitude * 3);
+      setShowHelp(false);
+    } else if (mode === 'draw') {
+      // Start painting
+      isDrawingRef.current = true;
+      drawPointsRef.current = [{ x, y }];
+      setShowHelp(false);
+    } else {
+      // Default: add source
+      const frequency = 2 * Math.PI / controls.wavelength;
+      sim.addSource(x, y, frequency, controls.amplitude);
+      setSourceCount(sim.sources.length);
+      setShowHelp(false);
+    }
+  }, [controls.wavelength, controls.amplitude, controls.interactionMode]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDraggingRef.current) return;
     const sim = simulationRef.current;
     if (!sim) return;
 
     const { x, y } = getCanvasCoords(e);
-    const source = sim.sources[dragSourceRef.current];
-    if (source) {
-      const oldX = source.x;
-      const oldY = source.y;
-      source.x = x / sim.cellSize;
-      source.y = y / sim.cellSize;
-      source.vx = (source.x - oldX) * 0.1;
-      source.vy = (source.y - oldY) * 0.1;
+
+    if (isDraggingRef.current) {
+      const source = sim.sources[dragSourceRef.current];
+      if (source) {
+        const oldX = source.x;
+        const oldY = source.y;
+        source.x = x / sim.cellSize;
+        source.y = y / sim.cellSize;
+        source.vx = (source.x - oldX) * 0.1;
+        source.vy = (source.y - oldY) * 0.1;
+      }
+      return;
+    }
+
+    if (isDrawingRef.current) {
+      const pts = drawPointsRef.current;
+      const last = pts[pts.length - 1];
+      // Only add if moved enough to avoid clustering
+      if (Math.hypot(x - last.x, y - last.y) > 12) {
+        pts.push({ x, y });
+      }
+      return;
+    }
+
+    // Probe line placement
+    if (isPlacingProbeRef.current && probeStartRef.current) {
+      setProbeLine({
+        x1: probeStartRef.current.x,
+        y1: probeStartRef.current.y,
+        x2: x, y2: y,
+      });
     }
   }, []);
 
@@ -512,10 +714,35 @@ function App() {
         source.vx = 0;
         source.vy = 0;
       }
+      isDraggingRef.current = false;
+      dragSourceRef.current = -1;
+      return;
     }
+
+    // Finish drawing — place sources along the painted path
+    if (isDrawingRef.current) {
+      const sim = simulationRef.current;
+      if (sim) {
+        const pts = drawPointsRef.current;
+        const frequency = 2 * Math.PI / controls.wavelength;
+        pts.forEach(pt => {
+          sim.addSource(pt.x, pt.y, frequency, controls.amplitude * 0.5);
+        });
+        setSourceCount(sim.sources.length);
+      }
+      isDrawingRef.current = false;
+      drawPointsRef.current = [];
+      return;
+    }
+
+    if (isPlacingProbeRef.current) {
+      isPlacingProbeRef.current = false;
+      probeStartRef.current = null;
+    }
+
     isDraggingRef.current = false;
     dragSourceRef.current = -1;
-  }, []);
+  }, [controls.wavelength, controls.amplitude]);
 
   // ──────── Touch support ────────
   const getTouchCoords = useCallback((e: React.TouchEvent) => {
@@ -540,7 +767,7 @@ function App() {
       const source = sim.sources[i];
       const sx = source.x * sim.cellSize;
       const sy = source.y * sim.cellSize;
-      if (Math.hypot(x - sx, y - sy) < 24) { // larger touch target
+      if (Math.hypot(x - sx, y - sy) < 24) {
         isDraggingRef.current = true;
         dragSourceRef.current = i;
         return;
@@ -562,28 +789,47 @@ function App() {
       return;
     }
 
-    // Single tap adds source
-    const frequency = 2 * Math.PI / controls.wavelength;
-    sim.addSource(x, y, frequency, controls.amplitude);
-    setSourceCount(sim.sources.length);
-    setShowHelp(false);
-  }, [controls.wavelength, controls.amplitude, getTouchCoords]);
+    const mode = controls.interactionMode;
+    if (mode === 'impulse') {
+      sim.applyImpulse(x, y, 30, controls.amplitude * 3);
+      setShowHelp(false);
+    } else if (mode === 'draw') {
+      isDrawingRef.current = true;
+      drawPointsRef.current = [{ x, y }];
+      setShowHelp(false);
+    } else {
+      const frequency = 2 * Math.PI / controls.wavelength;
+      sim.addSource(x, y, frequency, controls.amplitude);
+      setSourceCount(sim.sources.length);
+      setShowHelp(false);
+    }
+  }, [controls.wavelength, controls.amplitude, controls.interactionMode, getTouchCoords]);
 
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
-    if (!isDraggingRef.current) return;
     const sim = simulationRef.current;
     if (!sim) return;
-
     const { x, y } = getTouchCoords(e);
-    const source = sim.sources[dragSourceRef.current];
-    if (source) {
-      const oldX = source.x;
-      const oldY = source.y;
-      source.x = x / sim.cellSize;
-      source.y = y / sim.cellSize;
-      source.vx = (source.x - oldX) * 0.1;
-      source.vy = (source.y - oldY) * 0.1;
+
+    if (isDraggingRef.current) {
+      const source = sim.sources[dragSourceRef.current];
+      if (source) {
+        const oldX = source.x;
+        const oldY = source.y;
+        source.x = x / sim.cellSize;
+        source.y = y / sim.cellSize;
+        source.vx = (source.x - oldX) * 0.1;
+        source.vy = (source.y - oldY) * 0.1;
+      }
+      return;
+    }
+
+    if (isDrawingRef.current) {
+      const pts = drawPointsRef.current;
+      const last = pts[pts.length - 1];
+      if (Math.hypot(x - last.x, y - last.y) > 12) {
+        pts.push({ x, y });
+      }
     }
   }, [getTouchCoords]);
 
@@ -595,10 +841,30 @@ function App() {
         source.vx = 0;
         source.vy = 0;
       }
+      isDraggingRef.current = false;
+      dragSourceRef.current = -1;
+      return;
     }
+
+    // Finish drawing — place sources along the painted path
+    if (isDrawingRef.current) {
+      const sim = simulationRef.current;
+      if (sim) {
+        const pts = drawPointsRef.current;
+        const frequency = 2 * Math.PI / controls.wavelength;
+        pts.forEach(pt => {
+          sim.addSource(pt.x, pt.y, frequency, controls.amplitude * 0.5);
+        });
+        setSourceCount(sim.sources.length);
+      }
+      isDrawingRef.current = false;
+      drawPointsRef.current = [];
+      return;
+    }
+
     isDraggingRef.current = false;
     dragSourceRef.current = -1;
-  }, []);
+  }, [controls.wavelength, controls.amplitude]);
 
   // ──────── Keyboard shortcuts ────────
   useEffect(() => {
@@ -626,12 +892,35 @@ function App() {
         case 'P':
           setShowControls(s => !s);
           break;
+        case 'i':
+        case 'I':
+          setControls(prev => ({ ...prev, interactionMode: prev.interactionMode === 'impulse' ? 'source' : 'impulse' }));
+          break;
+        case 'd':
+        case 'D':
+          setControls(prev => ({ ...prev, interactionMode: prev.interactionMode === 'draw' ? 'source' : 'draw' }));
+          break;
+        case 'l':
+        case 'L':
+          // Toggle probe placement mode
+          if (isPlacingProbeRef.current) {
+            isPlacingProbeRef.current = false;
+            probeStartRef.current = null;
+          } else if (probeLine) {
+            setProbeLine(null); // Clear existing probe
+          } else {
+            // Start probe placement on next mouse interaction
+            isPlacingProbeRef.current = true;
+          }
+          break;
         case '1': loadPreset('Double Slit'); break;
         case '2': loadPreset('Single Slit'); break;
         case '3': loadPreset('Ripple Tank'); break;
         case '4': loadPreset('Two Sources'); break;
         case '5': loadPreset('Standing Waves'); break;
         case '6': loadPreset('Corner Reflector'); break;
+        case '7': loadPreset('Triple Source'); break;
+        case '8': loadPreset('Waveguide'); break;
       }
     };
 
@@ -710,8 +999,8 @@ function App() {
             <div className="help-content">
               <h2>🌊 Wave Playground</h2>
               <p>Click anywhere to drop a wave source</p>
-              <p className="help-sub">Drag sources for Doppler effect · Right-click to remove</p>
-              <p className="help-sub">Or try a preset →</p>
+              <p className="help-sub">Try 💧 Splash for impulse rings · 🖌️ Paint to draw wave shapes</p>
+              <p className="help-sub">Drag sources for Doppler · Right-click to remove</p>
             </div>
           </div>
         )}
@@ -736,6 +1025,54 @@ function App() {
             {isPlaying ? '⏸ Pause' : '▶ Play'}
           </button>
           <button className="btn-clear" onClick={clearSimulation}>⟲ Clear</button>
+        </div>
+
+        {/* Interaction Mode */}
+        <div className="control-group">
+          <label>Interaction Mode</label>
+          <div className="mode-row">
+            <button
+              className={`mode-btn ${controls.interactionMode === 'source' ? 'active' : ''}`}
+              onClick={() => setControls(prev => ({ ...prev, interactionMode: 'source' }))}
+              title="Click to place continuous wave sources"
+            >
+              🔵 Source
+            </button>
+            <button
+              className={`mode-btn ${controls.interactionMode === 'impulse' ? 'active' : ''}`}
+              onClick={() => setControls(prev => ({ ...prev, interactionMode: 'impulse' }))}
+              title="Click to drop a splash impulse — expanding ring wave"
+            >
+              💧 Splash
+            </button>
+            <button
+              className={`mode-btn ${controls.interactionMode === 'draw' ? 'active' : ''}`}
+              onClick={() => setControls(prev => ({ ...prev, interactionMode: 'draw' }))}
+              title="Draw to paint wave emitter trails"
+            >
+              🖌️ Paint
+            </button>
+          </div>
+        </div>
+
+        {/* Probe Line */}
+        <div className="control-group">
+          <div className="probe-row">
+            <button
+              className={`probe-btn ${probeLine ? 'active' : ''}`}
+              onClick={() => {
+                if (probeLine) {
+                  setProbeLine(null);
+                } else {
+                  isPlacingProbeRef.current = true;
+                  probeStartRef.current = null;
+                }
+              }}
+              title="Place a measurement line to see live waveform cross-section"
+            >
+              📏 {probeLine ? 'Clear Probe' : 'Place Probe'}
+            </button>
+          </div>
         </div>
 
         {/* View */}
@@ -857,11 +1194,12 @@ function App() {
         {/* Help */}
         <div className="instructions">
           <h4>How to Use</h4>
-          <p>🖱️ <strong>Click</strong> canvas to add wave sources</p>
-          <p>✋ <strong>Drag</strong> a source to move it (Doppler effect!)</p>
-          <p>🗑️ <strong>Right-click</strong> near a source to remove it</p>
-          <p>📐 Try <strong>Double Slit</strong> to see quantum interference</p>
-          <p>🔄 Toggle <strong>3D Surface</strong> for a height-map view</p>
+          <p>🔵 <strong>Source</strong> — Click to place continuous emitters</p>
+          <p>💧 <strong>Splash</strong> — Click for expanding ring impulse</p>
+          <p>🖌️ <strong>Paint</strong> — Drag to draw emitter trails</p>
+          <p>📏 <strong>Probe</strong> — Place a line, see live waveform</p>
+          <p>✋ <strong>Drag</strong> sources for Doppler effect</p>
+          <p>🗑️ <strong>Right-click</strong> to remove sources / probe</p>
         </div>
 
         <div className="control-section">
@@ -869,9 +1207,12 @@ function App() {
           <div className="instructions">
             <p><kbd>Space</kbd> Play / Pause</p>
             <p><kbd>C</kbd> Clear simulation</p>
+            <p><kbd>I</kbd> Toggle Splash mode</p>
+            <p><kbd>D</kbd> Toggle Paint mode</p>
+            <p><kbd>L</kbd> Toggle Probe line</p>
             <p><kbd>H</kbd> Toggle help</p>
             <p><kbd>P</kbd> Toggle panel</p>
-            <p><kbd>1</kbd>–<kbd>6</kbd> Load presets</p>
+            <p><kbd>1</kbd>–<kbd>8</kbd> Load presets</p>
           </div>
         </div>
 
