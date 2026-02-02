@@ -454,6 +454,88 @@ select:focus {
   box-shadow: 0 0 10px rgba(255, 200, 50, 0.1);
 }
 
+/* ── Cinematic Autoplay Badge ── */
+.cinematic-badge {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  background: rgba(10, 14, 26, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(79, 195, 247, 0.2);
+  border-radius: 20px;
+  animation: cinematicSlideUp 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 40;
+  pointer-events: none;
+}
+
+.cinematic-dot {
+  width: 8px;
+  height: 8px;
+  background: #4fc3f7;
+  border-radius: 50%;
+  animation: cinematicPulse 1.5s ease-in-out infinite;
+  box-shadow: 0 0 6px rgba(79, 195, 247, 0.6);
+}
+
+.cinematic-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.3px;
+}
+
+@keyframes cinematicSlideUp {
+  from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+  to { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+@keyframes cinematicPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.7); }
+}
+
+/* ── Cinematic Button ── */
+.cinematic-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid rgba(79, 195, 247, 0.15);
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #bbb;
+  background: rgba(79, 195, 247, 0.04);
+  transition: all 0.2s;
+}
+
+.cinematic-btn:hover {
+  background: rgba(79, 195, 247, 0.1);
+  border-color: rgba(79, 195, 247, 0.3);
+  color: #fff;
+}
+
+.cinematic-btn.active {
+  background: rgba(79, 195, 247, 0.15);
+  border-color: rgba(79, 195, 247, 0.4);
+  color: #4fc3f7;
+  box-shadow: 0 0 12px rgba(79, 195, 247, 0.1);
+}
+
+/* ── Active Preset Indicator ── */
+.preset-btn.active {
+  background: rgba(79, 195, 247, 0.15);
+  border-color: rgba(79, 195, 247, 0.35);
+  color: #4fc3f7;
+  box-shadow: 0 0 10px rgba(79, 195, 247, 0.08);
+  position: relative;
+}
+
 /* ── Focus visible ── */
 *:focus-visible {
   outline: 2px solid #4fc3f7;
@@ -482,7 +564,8 @@ kbd {
 
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
-  .help-overlay, .help-content, .controls, .controls.show, .controls.hide {
+  .help-overlay, .help-content, .controls, .controls.show, .controls.hide,
+  .cinematic-badge, .cinematic-dot {
     animation: none !important;
     transition: none !important;
   }

@@ -173,7 +173,14 @@ function App() {
   const [isPlaying, setIsPlaying] = useState(true);
   const [sourceCount, setSourceCount] = useState(0);
   const [activePreset, setActivePreset] = useState<string | null>(null);
-  const [showHelp, setShowHelp] = useState(true);
+  const [showHelp, setShowHelp] = useState(false); // false — auto-load preset instead
+
+  // Cinematic autoplay state
+  const [cinematic, setCinematic] = useState(false);
+  const cinematicTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cinematicIndexRef = useRef(0);
+  const PRESET_NAMES = Object.keys(PRESETS);
+  const CINEMATIC_INTERVAL = 10000; // 10s per preset
 
   // Drawing mode state
   const drawPointsRef = useRef<Array<{x: number; y: number}>>([]);
@@ -226,6 +233,33 @@ function App() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, [resizeCanvas]);
+
+  // ──────── Auto-load a preset on first mount for instant visual impact ────────
+  const hasAutoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (!hasAutoLoadedRef.current && simulationRef.current) {
+      hasAutoLoadedRef.current = true;
+      // Slight delay to ensure canvas is fully sized
+      requestAnimationFrame(() => loadPreset('Double Slit'));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simulationRef.current]);
+
+  // ──────── Cinematic autoplay — cycles through presets ────────
+  useEffect(() => {
+    if (cinematic) {
+      cinematicIndexRef.current = PRESET_NAMES.indexOf(activePreset ?? '') + 1;
+      cinematicTimerRef.current = setInterval(() => {
+        const idx = cinematicIndexRef.current % PRESET_NAMES.length;
+        loadPreset(PRESET_NAMES[idx]);
+        cinematicIndexRef.current = idx + 1;
+      }, CINEMATIC_INTERVAL);
+    }
+    return () => {
+      if (cinematicTimerRef.current) clearInterval(cinematicTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cinematic]);
 
   // ──────── Sync params ────────
   useEffect(() => {
@@ -376,25 +410,32 @@ function App() {
       render3D(ctx, sim, w, h);
     }
 
-    // Draw sources as glowing dots
+    // Draw sources as pulsing glowing dots — breathe at their wave frequency
+    const t = timeRef.current;
     sim.sources.forEach((source) => {
       const x = source.x * sim.cellSize;
       const y = source.y * sim.cellSize;
 
-      // Glow
-      const gradient = ctx.createRadialGradient(x, y, 0, x, y, 12);
-      gradient.addColorStop(0, 'rgba(255,255,255,0.9)');
-      gradient.addColorStop(0.4, 'rgba(100,200,255,0.5)');
+      // Pulse: source breathes at its own frequency
+      const pulse = 0.5 + 0.5 * Math.sin(t * source.frequency + source.phase);
+      const outerR = 10 + 8 * pulse; // 10-18px breathing radius
+      const coreR = 2.5 + 1.5 * pulse;
+      const glowAlpha = 0.4 + 0.5 * pulse;
+
+      // Outer glow
+      const gradient = ctx.createRadialGradient(x, y, 0, x, y, outerR);
+      gradient.addColorStop(0, `rgba(255,255,255,${(0.8 + 0.2 * pulse).toFixed(2)})`);
+      gradient.addColorStop(0.35, `rgba(100,200,255,${glowAlpha.toFixed(2)})`);
       gradient.addColorStop(1, 'rgba(100,200,255,0)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
-      ctx.arc(x, y, 12, 0, Math.PI * 2);
+      ctx.arc(x, y, outerR, 0, Math.PI * 2);
       ctx.fill();
 
       // Core
-      ctx.fillStyle = '#fff';
+      ctx.fillStyle = `rgba(255,255,255,${(0.85 + 0.15 * pulse).toFixed(2)})`;
       ctx.beginPath();
-      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.arc(x, y, coreR, 0, Math.PI * 2);
       ctx.fill();
     });
 
@@ -900,6 +941,10 @@ function App() {
         case 'D':
           setControls(prev => ({ ...prev, interactionMode: prev.interactionMode === 'draw' ? 'source' : 'draw' }));
           break;
+        case 'a':
+        case 'A':
+          setCinematic(c => !c);
+          break;
         case 'l':
         case 'L':
           // Toggle probe placement mode
@@ -1002,6 +1047,13 @@ function App() {
               <p className="help-sub">Try 💧 Splash for impulse rings · 🖌️ Paint to draw wave shapes</p>
               <p className="help-sub">Drag sources for Doppler · Right-click to remove</p>
             </div>
+          </div>
+        )}
+
+        {cinematic && activePreset && (
+          <div className="cinematic-badge">
+            <span className="cinematic-dot" />
+            <span className="cinematic-label">{activePreset}</span>
           </div>
         )}
       </div>
@@ -1179,7 +1231,7 @@ function App() {
               <button
                 key={name}
                 className={`preset-btn ${activePreset === name ? 'active' : ''}`}
-                onClick={() => loadPreset(name)}
+                onClick={() => { loadPreset(name); setCinematic(false); }}
                 title={preset.description}
               >
                 {name}
@@ -1189,6 +1241,13 @@ function App() {
           {activePreset && (
             <p className="preset-desc">{PRESETS[activePreset]?.description}</p>
           )}
+          <button
+            className={`cinematic-btn ${cinematic ? 'active' : ''}`}
+            onClick={() => setCinematic(c => !c)}
+            title="Auto-cycle through all presets (keyboard: A)"
+          >
+            {cinematic ? '⏸ Stop Autoplay' : '🎬 Cinematic Autoplay'}
+          </button>
         </div>
 
         {/* Help */}
@@ -1209,6 +1268,7 @@ function App() {
             <p><kbd>C</kbd> Clear simulation</p>
             <p><kbd>I</kbd> Toggle Splash mode</p>
             <p><kbd>D</kbd> Toggle Paint mode</p>
+            <p><kbd>A</kbd> Cinematic autoplay</p>
             <p><kbd>L</kbd> Toggle Probe line</p>
             <p><kbd>H</kbd> Toggle help</p>
             <p><kbd>P</kbd> Toggle panel</p>
