@@ -1,6 +1,43 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { WaveSimulation } from './WaveSimulation';
 import './App.css';
+
+// Error boundary for canvas crash recovery
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{
+          display: 'flex', justifyContent: 'center', alignItems: 'center',
+          height: '100vh', background: '#0a0e1a', color: '#e0e0e0', flexDirection: 'column',
+          gap: '16px'
+        }}>
+          <h2>🌊 Something went wrong</h2>
+          <button
+            onClick={() => { this.setState({ hasError: false }); window.location.reload(); }}
+            style={{
+              padding: '10px 20px', background: '#4fc3f7', color: '#000',
+              border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 600
+            }}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface Controls {
   wavelength: number;
@@ -36,40 +73,51 @@ const COLOR_SCHEMES = {
   },
 };
 
-const PRESETS: Record<string, { walls?: Array<{ x1: number; y1: number; x2: number; y2: number; slits?: Array<{ start: number; end: number }> }>; reflective?: boolean; sources?: Array<{ x: number; y: number; freq?: number }>; description: string }> = {
+// Presets use relative coordinates (0-1) for responsive sizing
+interface PresetDef {
+  walls?: Array<{
+    x1: number; y1: number; x2: number; y2: number;
+    slits?: Array<{ start: number; end: number }>;
+  }>;
+  reflective?: boolean;
+  sources?: Array<{ x: number; y: number; freq?: number }>;
+  description: string;
+}
+
+const PRESETS: Record<string, PresetDef> = {
   'Double Slit': {
-    walls: [{ x1: 300, y1: 0, x2: 300, y2: 600, slits: [{ start: 0.40, end: 0.46 }, { start: 0.54, end: 0.60 }] }],
-    sources: [{ x: 100, y: 300 }],
+    walls: [{ x1: 0.375, y1: 0, x2: 0.375, y2: 1, slits: [{ start: 0.40, end: 0.46 }, { start: 0.54, end: 0.60 }] }],
+    sources: [{ x: 0.125, y: 0.5 }],
     description: 'Classic quantum experiment — watch interference patterns form behind the slits',
   },
   'Single Slit': {
-    walls: [{ x1: 300, y1: 0, x2: 300, y2: 600, slits: [{ start: 0.46, end: 0.54 }] }],
-    sources: [{ x: 100, y: 300 }],
+    walls: [{ x1: 0.375, y1: 0, x2: 0.375, y2: 1, slits: [{ start: 0.46, end: 0.54 }] }],
+    sources: [{ x: 0.125, y: 0.5 }],
     description: 'Observe diffraction — waves bending around a single opening',
   },
   'Ripple Tank': {
     walls: [],
-    sources: [{ x: 400, y: 300 }],
+    sources: [{ x: 0.5, y: 0.5 }],
     description: 'Open water — click to drop more sources and watch interference',
   },
   'Two Sources': {
     walls: [],
-    sources: [{ x: 300, y: 200 }, { x: 300, y: 400 }],
+    sources: [{ x: 0.375, y: 0.33 }, { x: 0.375, y: 0.67 }],
     description: 'Two coherent sources — constructive & destructive interference',
   },
   'Standing Waves': {
     reflective: true,
     walls: [],
-    sources: [{ x: 400, y: 300 }],
+    sources: [{ x: 0.5, y: 0.5 }],
     description: 'Reflective boundaries create standing wave patterns',
   },
   'Corner Reflector': {
     reflective: true,
     walls: [
-      { x1: 500, y1: 100, x2: 500, y2: 400 },
-      { x1: 500, y1: 400, x2: 200, y2: 400 },
+      { x1: 0.625, y1: 0.167, x2: 0.625, y2: 0.667 },
+      { x1: 0.625, y1: 0.667, x2: 0.25, y2: 0.667 },
     ],
-    sources: [{ x: 350, y: 250 }],
+    sources: [{ x: 0.4375, y: 0.417 }],
     description: 'Waves reflecting off an L-shaped barrier',
   },
 };
@@ -469,14 +517,139 @@ function App() {
     dragSourceRef.current = -1;
   }, []);
 
+  // ──────── Touch support ────────
+  const getTouchCoords = useCallback((e: React.TouchEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0] || e.changedTouches[0];
+    return {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top,
+    };
+  }, []);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    const sim = simulationRef.current;
+    if (!sim) return;
+    const { x, y } = getTouchCoords(e);
+
+    // Check if touching a source (for drag)
+    for (let i = 0; i < sim.sources.length; i++) {
+      const source = sim.sources[i];
+      const sx = source.x * sim.cellSize;
+      const sy = source.y * sim.cellSize;
+      if (Math.hypot(x - sx, y - sy) < 24) { // larger touch target
+        isDraggingRef.current = true;
+        dragSourceRef.current = i;
+        return;
+      }
+    }
+
+    // Two-finger touch removes nearest source
+    if (e.touches.length >= 2) {
+      let minDist = Infinity;
+      let minIdx = -1;
+      sim.sources.forEach((s, i) => {
+        const d = Math.hypot(x - s.x * sim.cellSize, y - s.y * sim.cellSize);
+        if (d < minDist) { minDist = d; minIdx = i; }
+      });
+      if (minIdx >= 0 && minDist < 40) {
+        sim.sources.splice(minIdx, 1);
+        setSourceCount(sim.sources.length);
+      }
+      return;
+    }
+
+    // Single tap adds source
+    const frequency = 2 * Math.PI / controls.wavelength;
+    sim.addSource(x, y, frequency, controls.amplitude);
+    setSourceCount(sim.sources.length);
+    setShowHelp(false);
+  }, [controls.wavelength, controls.amplitude, getTouchCoords]);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    e.preventDefault();
+    if (!isDraggingRef.current) return;
+    const sim = simulationRef.current;
+    if (!sim) return;
+
+    const { x, y } = getTouchCoords(e);
+    const source = sim.sources[dragSourceRef.current];
+    if (source) {
+      const oldX = source.x;
+      const oldY = source.y;
+      source.x = x / sim.cellSize;
+      source.y = y / sim.cellSize;
+      source.vx = (source.x - oldX) * 0.1;
+      source.vy = (source.y - oldY) * 0.1;
+    }
+  }, [getTouchCoords]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (isDraggingRef.current) {
+      const sim = simulationRef.current;
+      const source = sim?.sources[dragSourceRef.current];
+      if (source) {
+        source.vx = 0;
+        source.vy = 0;
+      }
+    }
+    isDraggingRef.current = false;
+    dragSourceRef.current = -1;
+  }, []);
+
+  // ──────── Keyboard shortcuts ────────
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't capture when typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+
+      switch (e.key) {
+        case ' ':
+          e.preventDefault();
+          setIsPlaying(p => !p);
+          break;
+        case 'Escape':
+          setShowHelp(false);
+          break;
+        case 'c':
+        case 'C':
+          clearSimulation();
+          break;
+        case 'h':
+        case 'H':
+          setShowHelp(h => !h);
+          break;
+        case 'p':
+        case 'P':
+          setShowControls(s => !s);
+          break;
+        case '1': loadPreset('Double Slit'); break;
+        case '2': loadPreset('Single Slit'); break;
+        case '3': loadPreset('Ripple Tank'); break;
+        case '4': loadPreset('Two Sources'); break;
+        case '5': loadPreset('Standing Waves'); break;
+        case '6': loadPreset('Corner Reflector'); break;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controls.wavelength, controls.amplitude]);
+
   // ──────── Presets ────────
-  const loadPreset = (name: string) => {
+  const loadPreset = useCallback((name: string) => {
     const sim = simulationRef.current;
     if (!sim) return;
 
     sim.clear();
     const preset = PRESETS[name];
     if (!preset) return;
+
+    const { w, h } = canvasSizeRef.current;
 
     if (preset.reflective) {
       setControls(prev => ({ ...prev, reflectiveBoundaries: true }));
@@ -486,20 +659,25 @@ function App() {
       sim.reflectiveBoundaries = false;
     }
 
+    // Scale relative (0-1) coordinates to actual canvas size
     preset.walls?.forEach(wall => {
-      sim.addWall(wall.x1, wall.y1, wall.x2, wall.y2, wall.slits);
+      sim.addWall(
+        wall.x1 * w, wall.y1 * h,
+        wall.x2 * w, wall.y2 * h,
+        wall.slits
+      );
     });
 
     const frequency = 2 * Math.PI / controls.wavelength;
     preset.sources?.forEach(s => {
-      sim.addSource(s.x, s.y, s.freq ?? frequency, controls.amplitude);
+      sim.addSource(s.x * w, s.y * h, s.freq ?? frequency, controls.amplitude);
     });
 
     setSourceCount(sim.sources.length);
     setActivePreset(name);
     setShowHelp(false);
     timeRef.current = 0;
-  };
+  }, [controls.wavelength, controls.amplitude]);
 
   const clearSimulation = () => {
     simulationRef.current?.clear();
@@ -510,14 +688,21 @@ function App() {
 
   // ──────── Render UI ────────
   return (
+    <ErrorBoundary>
     <div className="app" onContextMenu={e => e.preventDefault()}>
       <div className="canvas-container" ref={containerRef}>
         <canvas
           ref={canvasRef}
+          role="img"
+          aria-label="Wave simulation canvas. Click to add wave sources, drag to move them. Use keyboard shortcuts: Space to play/pause, C to clear, H for help, 1-6 for presets."
+          tabIndex={0}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onMouseLeave={handleMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
         />
 
         {showHelp && sourceCount === 0 && (
@@ -536,11 +721,13 @@ function App() {
         className="toggle-controls"
         onClick={() => setShowControls(!showControls)}
         title={showControls ? 'Hide controls' : 'Show controls'}
+        aria-label={showControls ? 'Hide controls panel' : 'Show controls panel'}
+        aria-expanded={showControls}
       >
         {showControls ? '✕' : '☰'}
       </button>
 
-      <div className={`controls ${showControls ? 'show' : 'hide'}`}>
+      <div className={`controls ${showControls ? 'show' : 'hide'}`} role="region" aria-label="Simulation controls">
         <h3>Wave Playground</h3>
 
         {/* Transport */}
@@ -588,37 +775,49 @@ function App() {
           <h4>Wave Parameters</h4>
 
           <div className="control-group">
-            <label>Wavelength: <span className="value">{controls.wavelength}</span></label>
+            <label htmlFor="wavelength-slider">Wavelength: <span className="value">{controls.wavelength}</span></label>
             <input
+              id="wavelength-slider"
               type="range" min="15" max="120"
               value={controls.wavelength}
+              aria-valuenow={controls.wavelength}
+              aria-valuemin={15} aria-valuemax={120}
               onChange={(e) => setControls(prev => ({ ...prev, wavelength: Number(e.target.value) }))}
             />
           </div>
 
           <div className="control-group">
-            <label>Amplitude: <span className="value">{controls.amplitude.toFixed(1)}</span></label>
+            <label htmlFor="amplitude-slider">Amplitude: <span className="value">{controls.amplitude.toFixed(1)}</span></label>
             <input
+              id="amplitude-slider"
               type="range" min="0.1" max="3" step="0.1"
               value={controls.amplitude}
+              aria-valuenow={controls.amplitude}
+              aria-valuemin={0.1} aria-valuemax={3}
               onChange={(e) => setControls(prev => ({ ...prev, amplitude: Number(e.target.value) }))}
             />
           </div>
 
           <div className="control-group">
-            <label>Speed: <span className="value">{controls.waveSpeed.toFixed(2)}</span></label>
+            <label htmlFor="speed-slider">Speed: <span className="value">{controls.waveSpeed.toFixed(2)}</span></label>
             <input
+              id="speed-slider"
               type="range" min="0.1" max="1.5" step="0.05"
               value={controls.waveSpeed}
+              aria-valuenow={controls.waveSpeed}
+              aria-valuemin={0.1} aria-valuemax={1.5}
               onChange={(e) => setControls(prev => ({ ...prev, waveSpeed: Number(e.target.value) }))}
             />
           </div>
 
           <div className="control-group">
-            <label>Damping: <span className="value">{controls.damping.toFixed(3)}</span></label>
+            <label htmlFor="damping-slider">Damping: <span className="value">{controls.damping.toFixed(3)}</span></label>
             <input
+              id="damping-slider"
               type="range" min="0.980" max="1.000" step="0.001"
               value={controls.damping}
+              aria-valuenow={controls.damping}
+              aria-valuemin={0.98} aria-valuemax={1.0}
               onChange={(e) => setControls(prev => ({ ...prev, damping: Number(e.target.value) }))}
             />
           </div>
@@ -665,6 +864,17 @@ function App() {
           <p>🔄 Toggle <strong>3D Surface</strong> for a height-map view</p>
         </div>
 
+        <div className="control-section">
+          <h4>Keyboard Shortcuts</h4>
+          <div className="instructions">
+            <p><kbd>Space</kbd> Play / Pause</p>
+            <p><kbd>C</kbd> Clear simulation</p>
+            <p><kbd>H</kbd> Toggle help</p>
+            <p><kbd>P</kbd> Toggle panel</p>
+            <p><kbd>1</kbd>–<kbd>6</kbd> Load presets</p>
+          </div>
+        </div>
+
         <div className="footer">
           <a href="https://github.com/kai-claw/wave-playground" target="_blank" rel="noopener noreferrer">
             GitHub ↗
@@ -672,6 +882,7 @@ function App() {
         </div>
       </div>
     </div>
+    </ErrorBoundary>
   );
 }
 

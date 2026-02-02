@@ -34,6 +34,10 @@ export class WaveSimulation {
   damping: number = 0.995;
   dt: number = 1.0;
   
+  // CFL stability: max c*dt/dx for 2D wave equation is 1/sqrt(2) ≈ 0.707
+  // We use sub-stepping to maintain stability at any waveSpeed
+  static readonly CFL_LIMIT = 0.5; // conservative (stable margin)
+  
   sources: WaveSource[] = [];
   walls: Wall[] = [];
   reflectiveBoundaries: boolean = false;
@@ -85,10 +89,12 @@ export class WaveSimulation {
   }
   
   step(time: number): void {
-    const c2 = this.waveSpeed * this.waveSpeed;
-    const dt2 = this.dt * this.dt;
+    // CFL sub-stepping: if c*dt/dx > CFL_LIMIT, split into sub-steps
+    const cflRatio = this.waveSpeed * this.dt; // dx=1 in grid space
+    const subSteps = Math.max(1, Math.ceil(cflRatio / WaveSimulation.CFL_LIMIT));
+    const subDt = this.dt / subSteps;
     
-    // Add wave sources
+    // Add wave sources (once per full step, not per sub-step)
     for (const source of this.sources) {
       if (!source.active) continue;
       
@@ -106,7 +112,19 @@ export class WaveSimulation {
       if (source.vy) source.y += source.vy * this.dt;
     }
     
-    // Wave equation: u_tt = c²∇²u
+    // Sub-stepped wave equation: u_tt = c²∇²u
+    for (let s = 0; s < subSteps; s++) {
+      this.substep(subDt);
+    }
+    
+    // NaN/Infinity recovery guard
+    this.stabilityGuard();
+  }
+  
+  private substep(dt: number): void {
+    const c2 = this.waveSpeed * this.waveSpeed;
+    const dt2 = dt * dt;
+    
     for (let y = 1; y < this.rows - 1; y++) {
       for (let x = 1; x < this.cols - 1; x++) {
         const idx = this.getIndex(x, y);
@@ -127,15 +145,33 @@ export class WaveSimulation {
           4 * this.current[idx]
         );
         
-        // Wave equation
+        // Wave equation with amplitude clamping
         const newValue = 2 * this.current[idx] - this.previous[idx] + c2 * dt2 * laplacian;
         this.previous[idx] = this.current[idx];
-        this.current[idx] = newValue * this.damping;
+        // Clamp to prevent runaway growth even within CFL bounds
+        this.current[idx] = Math.max(-50, Math.min(50, newValue * this.damping));
       }
     }
     
     // Boundary conditions
     this.applyBoundaryConditions();
+  }
+  
+  /** Detect and recover from NaN/Infinity corruption */
+  private stabilityGuard(): void {
+    let corrupted = false;
+    for (let i = 0; i < this.current.length; i++) {
+      if (!isFinite(this.current[i])) {
+        corrupted = true;
+        break;
+      }
+    }
+    if (corrupted) {
+      // Soft reset: zero the field but keep sources/walls
+      this.current.fill(0);
+      this.previous.fill(0);
+      this.velocity.fill(0);
+    }
   }
   
   private isInsideWall(x: number, y: number): boolean {

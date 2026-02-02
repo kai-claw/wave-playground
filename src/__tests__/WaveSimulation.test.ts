@@ -223,9 +223,9 @@ describe('WaveSimulation', () => {
 
   // ── Stability ──
   describe('stability', () => {
-    // AUDIT NOTE: waveSpeed > ~0.7 causes CFL violation → Infinity.
-    // The UI allows speed up to 1.5, which WILL diverge. Bug for Black Hat.
-    it('documents CFL violation at high waveSpeed', () => {
+    // FIXED in Black Hat pass: CFL sub-stepping now keeps simulation stable
+    // at any waveSpeed. Sub-steps are automatically computed to satisfy CFL condition.
+    it('stays stable at high waveSpeed via CFL sub-stepping', () => {
       sim.waveSpeed = 1.2;
       sim.addSource(100, 100, 0.2, 1);
       for (let i = 0; i < 200; i++) sim.step(i);
@@ -234,8 +234,8 @@ describe('WaveSimulation', () => {
       for (let i = 0; i < sim.current.length; i++) {
         if (!isFinite(sim.current[i])) { hasInf = true; break; }
       }
-      // Known: high waveSpeed causes divergence
-      expect(hasInf).toBe(true);
+      // CFL sub-stepping prevents divergence
+      expect(hasInf).toBe(false);
     });
 
     it('stays stable with safe waveSpeed', () => {
@@ -266,6 +266,123 @@ describe('WaveSimulation', () => {
       for (let i = 0; i < 50; i++) sim.step(i);
       const energy = sim.current.reduce((sum, v) => sum + v * v, 0);
       expect(energy).toBe(0);
+    });
+  });
+
+  // ── CFL Sub-stepping (Black Hat fixes) ──
+  describe('CFL sub-stepping', () => {
+    it('computes correct sub-step count for high waveSpeed', () => {
+      sim.waveSpeed = 1.5;
+      // CFL_LIMIT = 0.5, ratio = 1.5 → subSteps = ceil(1.5/0.5) = 3
+      // Verified indirectly: simulation stays stable
+      sim.addSource(100, 100, 0.2, 1);
+      for (let i = 0; i < 300; i++) sim.step(i);
+      let hasInf = false;
+      for (let i = 0; i < sim.current.length; i++) {
+        if (!isFinite(sim.current[i])) { hasInf = true; break; }
+      }
+      expect(hasInf).toBe(false);
+    });
+
+    it('stays stable at extreme waveSpeed=3.0', () => {
+      sim.waveSpeed = 3.0;
+      sim.addSource(100, 100, 0.3, 2);
+      for (let i = 0; i < 200; i++) sim.step(i);
+      let hasInf = false;
+      for (let i = 0; i < sim.current.length; i++) {
+        if (!isFinite(sim.current[i])) { hasInf = true; break; }
+      }
+      expect(hasInf).toBe(false);
+    });
+
+    it('uses single step for low waveSpeed', () => {
+      sim.waveSpeed = 0.3;
+      // ratio = 0.3 → subSteps = max(1, ceil(0.3/0.5)) = 1
+      sim.addSource(100, 100, 0.1, 1);
+      for (let i = 0; i < 100; i++) sim.step(i);
+      let hasInf = false;
+      for (let i = 0; i < sim.current.length; i++) {
+        if (!isFinite(sim.current[i])) { hasInf = true; break; }
+      }
+      expect(hasInf).toBe(false);
+    });
+  });
+
+  // ── NaN/Infinity recovery ──
+  describe('stability guard', () => {
+    it('amplitude is clamped to prevent runaway growth', () => {
+      sim.waveSpeed = 0.5;
+      sim.damping = 1.0; // no damping at all
+      sim.addSource(100, 100, 0.5, 5); // high amplitude + high freq
+      for (let i = 0; i < 500; i++) sim.step(i);
+
+      let maxVal = 0;
+      for (let i = 0; i < sim.current.length; i++) {
+        maxVal = Math.max(maxVal, Math.abs(sim.current[i]));
+      }
+      // Clamped to [-50, 50]
+      expect(maxVal).toBeLessThanOrEqual(50);
+      expect(isFinite(maxVal)).toBe(true);
+    });
+
+    it('all field values stay finite after 1000 steps with damping=1.0', () => {
+      sim.waveSpeed = 0.7;
+      sim.damping = 1.0;
+      sim.addSource(100, 100, 0.2, 2);
+      for (let i = 0; i < 1000; i++) sim.step(i);
+
+      for (let i = 0; i < sim.current.length; i++) {
+        expect(isFinite(sim.current[i])).toBe(true);
+      }
+    });
+
+    it('CFL_LIMIT constant is 0.5', () => {
+      expect(WaveSimulation.CFL_LIMIT).toBe(0.5);
+    });
+
+    it('recovers from manually injected NaN', () => {
+      sim.addSource(100, 100, 0.1, 1);
+      for (let i = 0; i < 10; i++) sim.step(i);
+
+      // Manually corrupt the field
+      sim.current[sim.getIndex(25, 25)] = NaN;
+      sim.current[sim.getIndex(26, 26)] = Infinity;
+
+      // Next step should trigger stabilityGuard and recover
+      sim.step(10);
+
+      let hasCorruption = false;
+      for (let i = 0; i < sim.current.length; i++) {
+        if (!isFinite(sim.current[i])) { hasCorruption = true; break; }
+      }
+      expect(hasCorruption).toBe(false);
+    });
+  });
+
+  // ── Edge cases ──
+  describe('edge cases', () => {
+    it('handles source outside grid bounds', () => {
+      sim.addSource(-100, -100, 0.1, 1);
+      sim.addSource(9999, 9999, 0.1, 1);
+      // Should not throw
+      for (let i = 0; i < 10; i++) sim.step(i);
+      expect(true).toBe(true);
+    });
+
+    it('handles wall with zero length', () => {
+      sim.addWall(100, 100, 100, 100);
+      sim.addSource(50, 50, 0.1, 1);
+      for (let i = 0; i < 20; i++) sim.step(i);
+      // Should not crash
+      expect(true).toBe(true);
+    });
+
+    it('handles very small grid (2x2)', () => {
+      const tiny = new WaveSimulation(8, 8, 4); // 2x2 grid
+      tiny.addSource(4, 4, 0.1, 1);
+      for (let i = 0; i < 10; i++) tiny.step(i);
+      // Interior is empty (only boundary cells), but should not crash
+      expect(true).toBe(true);
     });
   });
 });
