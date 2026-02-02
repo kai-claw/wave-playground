@@ -1155,7 +1155,7 @@ function App() {
 
         {/* Transport */}
         <div className="control-group transport">
-          <button className="btn-play" onClick={() => setIsPlaying(!isPlaying)}>
+          <button className={`btn-play ${isPlaying ? 'playing' : ''}`} onClick={() => setIsPlaying(!isPlaying)}>
             {isPlaying ? '⏸ Pause' : '▶ Play'}
           </button>
           <button className="btn-clear" onClick={clearSimulation}>⟲ Clear</button>
