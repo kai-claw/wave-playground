@@ -54,15 +54,15 @@ interface Controls {
   cellSize: number;
   reflectiveBoundaries: boolean;
   visualMode: '2D' | '3D';
-  colorScheme: 'ocean' | 'thermal' | 'neon' | 'grayscale';
+  colorScheme: 'ocean' | 'thermal' | 'neon' | 'aurora' | 'plasma' | 'grayscale';
   interactionMode: InteractionMode;
 }
 
 const COLOR_SCHEMES = {
   ocean: {
-    positive: (i: number) => [Math.floor(20 + 60 * i), Math.floor(120 + 135 * i), Math.floor(200 + 55 * i)],
-    negative: (i: number) => [Math.floor(10 + 30 * i), Math.floor(30 + 60 * i), Math.floor(100 + 80 * i)],
-    bg: [8, 12, 28],
+    positive: (i: number) => [Math.floor(15 + 50 * i), Math.floor(100 + 155 * i), Math.floor(180 + 75 * i)],
+    negative: (i: number) => [Math.floor(8 + 25 * i), Math.floor(25 + 70 * i), Math.floor(80 + 100 * i)],
+    bg: [6, 10, 24],
   },
   thermal: {
     positive: (i: number) => [Math.floor(255 * i), Math.floor(120 * i), Math.floor(20 * i)],
@@ -73,6 +73,16 @@ const COLOR_SCHEMES = {
     positive: (i: number) => [Math.floor(40 + 215 * i), Math.floor(255 * i), Math.floor(100 + 155 * i)],
     negative: (i: number) => [Math.floor(180 * i), Math.floor(50 + 100 * i), Math.floor(255 * i)],
     bg: [5, 5, 15],
+  },
+  aurora: {
+    positive: (i: number) => [Math.floor(20 + 80 * i), Math.floor(200 + 55 * i), Math.floor(120 + 100 * i)],
+    negative: (i: number) => [Math.floor(100 + 80 * i), Math.floor(30 + 80 * i), Math.floor(180 + 75 * i)],
+    bg: [4, 8, 16],
+  },
+  plasma: {
+    positive: (i: number) => [Math.floor(255 * i), Math.floor(50 + 100 * i * i), Math.floor(200 * (1 - i * 0.5))],
+    negative: (i: number) => [Math.floor(40 + 60 * i), Math.floor(20 + 40 * i), Math.floor(180 + 75 * i)],
+    bg: [8, 4, 12],
   },
   grayscale: {
     positive: (i: number) => { const v = Math.floor(255 * i); return [v, v, v]; },
@@ -158,7 +168,7 @@ function App() {
   const canvasSizeRef = useRef({ w: 800, h: 600 });
 
   const [controls, setControls] = useState<Controls>({
-    wavelength: 50,
+    wavelength: 60,
     amplitude: 1,
     waveSpeed: 0.5,
     damping: 0.995,
@@ -180,7 +190,8 @@ function App() {
   const cinematicTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const cinematicIndexRef = useRef(0);
   const PRESET_NAMES = Object.keys(PRESETS);
-  const CINEMATIC_INTERVAL = 10000; // 10s per preset
+  const CINEMATIC_INTERVAL = 12000; // 12s per preset
+  const [cinematicProgress, setCinematicProgress] = useState(0);
 
   // Drawing mode state
   const drawPointsRef = useRef<Array<{x: number; y: number}>>([]);
@@ -249,11 +260,17 @@ function App() {
   useEffect(() => {
     if (cinematic) {
       cinematicIndexRef.current = PRESET_NAMES.indexOf(activePreset ?? '') + 1;
+      setCinematicProgress(0);
+      const startTime = Date.now();
       cinematicTimerRef.current = setInterval(() => {
-        const idx = cinematicIndexRef.current % PRESET_NAMES.length;
-        loadPreset(PRESET_NAMES[idx]);
-        cinematicIndexRef.current = idx + 1;
-      }, CINEMATIC_INTERVAL);
+        const elapsed = Date.now() - startTime;
+        const currentCycle = Math.floor(elapsed / CINEMATIC_INTERVAL);
+        setCinematicProgress((elapsed % CINEMATIC_INTERVAL) / CINEMATIC_INTERVAL);
+        const targetIdx = (cinematicIndexRef.current + currentCycle) % PRESET_NAMES.length;
+        if (PRESET_NAMES[targetIdx] !== activePreset) {
+          loadPreset(PRESET_NAMES[targetIdx]);
+        }
+      }, 100); // Update progress smoothly
     }
     return () => {
       if (cinematicTimerRef.current) clearInterval(cinematicTimerRef.current);
@@ -403,6 +420,7 @@ function App() {
     if (!ctx) return;
 
     const { w, h } = canvasSizeRef.current;
+    const scheme = COLOR_SCHEMES[controls.colorScheme];
 
     if (controls.visualMode === '2D') {
       render2D(ctx, sim, w, h);
@@ -410,7 +428,7 @@ function App() {
       render3D(ctx, sim, w, h);
     }
 
-    // Draw sources as pulsing glowing dots — breathe at their wave frequency
+    // Draw sources as pulsing glowing dots with expanding ring animations
     const t = timeRef.current;
     sim.sources.forEach((source) => {
       const x = source.x * sim.cellSize;
@@ -422,20 +440,43 @@ function App() {
       const coreR = 2.5 + 1.5 * pulse;
       const glowAlpha = 0.4 + 0.5 * pulse;
 
+      // Expanding ring pulses — 3 concentric rings at different phases
+      for (let ring = 0; ring < 3; ring++) {
+        const ringPhase = (t * source.frequency * 0.3 + ring * 2.1) % (Math.PI * 2);
+        const ringProgress = ringPhase / (Math.PI * 2);
+        const ringRadius = 18 + ringProgress * 45;
+        const ringAlpha = (1 - ringProgress) * 0.25 * source.amplitude;
+
+        if (ringAlpha > 0.02) {
+          ctx.strokeStyle = `rgba(100, 200, 255, ${ringAlpha.toFixed(3)})`;
+          ctx.lineWidth = 1.5 * (1 - ringProgress * 0.7);
+          ctx.beginPath();
+          ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+
       // Outer glow
       const gradient = ctx.createRadialGradient(x, y, 0, x, y, outerR);
-      gradient.addColorStop(0, `rgba(255,255,255,${(0.8 + 0.2 * pulse).toFixed(2)})`);
-      gradient.addColorStop(0.35, `rgba(100,200,255,${glowAlpha.toFixed(2)})`);
+      gradient.addColorStop(0, `rgba(255,255,255,${(0.85 + 0.15 * pulse).toFixed(2)})`);
+      gradient.addColorStop(0.3, `rgba(100,200,255,${glowAlpha.toFixed(2)})`);
+      gradient.addColorStop(0.7, `rgba(60,150,220,${(glowAlpha * 0.3).toFixed(2)})`);
       gradient.addColorStop(1, 'rgba(100,200,255,0)');
       ctx.fillStyle = gradient;
       ctx.beginPath();
       ctx.arc(x, y, outerR, 0, Math.PI * 2);
       ctx.fill();
 
-      // Core
-      ctx.fillStyle = `rgba(255,255,255,${(0.85 + 0.15 * pulse).toFixed(2)})`;
+      // Core with bright center
+      ctx.fillStyle = `rgba(255,255,255,${(0.9 + 0.1 * pulse).toFixed(2)})`;
       ctx.beginPath();
       ctx.arc(x, y, coreR, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner sparkle
+      ctx.fillStyle = `rgba(200,235,255,${(0.4 * pulse).toFixed(2)})`;
+      ctx.beginPath();
+      ctx.arc(x, y, coreR * 0.5, 0, Math.PI * 2);
       ctx.fill();
     });
 
@@ -463,10 +504,26 @@ function App() {
       ctx.lineTo(x2, y2);
       ctx.stroke();
 
-      // Draw slits as bright gaps
+      // Draw slits as glowing gaps
       if (wall.slits) {
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 5;
+        // Clear the slit area first
+        ctx.strokeStyle = `rgb(${scheme.bg.join(',')})`;
+        ctx.lineWidth = 7;
+        wall.slits.forEach(slit => {
+          const sx1 = x1 + (x2 - x1) * slit.start;
+          const sy1 = y1 + (y2 - y1) * slit.start;
+          const sx2 = x1 + (x2 - x1) * slit.end;
+          const sy2 = y1 + (y2 - y1) * slit.end;
+
+          ctx.beginPath();
+          ctx.moveTo(sx1, sy1);
+          ctx.lineTo(sx2, sy2);
+          ctx.stroke();
+        });
+
+        // Subtle glow on slit edges
+        ctx.strokeStyle = 'rgba(100, 200, 255, 0.15)';
+        ctx.lineWidth = 12;
         wall.slits.forEach(slit => {
           const sx1 = x1 + (x2 - x1) * slit.start;
           const sy1 = y1 + (y2 - y1) * slit.start;
@@ -601,13 +658,23 @@ function App() {
       ctx.fillText('PROBE', chartX + 4, chartY + 12);
     }
 
-    // HUD — source count + mode
-    ctx.fillStyle = 'rgba(0,0,0,0.5)';
-    ctx.fillRect(8, 8, 160, 28);
+    // HUD — source count + mode with rounded badge
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 165, 30, 8);
+    ctx.fill();
+    // Subtle border
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(8, 8, 165, 30, 8);
+    ctx.stroke();
     ctx.fillStyle = '#4fc3f7';
     ctx.font = '12px monospace';
     const modeLabel = controls.interactionMode === 'impulse' ? '💧' : controls.interactionMode === 'draw' ? '🖌️' : '🔵';
-    ctx.fillText(`${modeLabel} Sources: ${sim.sources.length}`, 16, 26);
+    ctx.fillText(`${modeLabel} Sources: ${sim.sources.length}`, 18, 27);
+    ctx.restore();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controls.visualMode, controls.colorScheme, controls.interactionMode, probeLine]);
 
@@ -1053,7 +1120,22 @@ function App() {
         {cinematic && activePreset && (
           <div className="cinematic-badge">
             <span className="cinematic-dot" />
-            <span className="cinematic-label">{activePreset}</span>
+            <div className="cinematic-info">
+              <span className="cinematic-label">{activePreset}</span>
+              <span className="cinematic-desc">{PRESETS[activePreset]?.description}</span>
+            </div>
+            <div className="cinematic-progress">
+              <div className="cinematic-progress-fill" style={{ width: `${cinematicProgress * 100}%` }} />
+            </div>
+          </div>
+        )}
+
+        {!showHelp && !cinematic && (
+          <div className="instructions-bar">
+            <span><kbd>Space</kbd> Play/Pause</span>
+            <span><kbd>C</kbd> Clear</span>
+            <span><kbd>H</kbd> Help</span>
+            <span><kbd>1</kbd>–<kbd>8</kbd> Presets</span>
           </div>
         )}
       </div>
@@ -1155,6 +1237,8 @@ function App() {
             <option value="ocean">🌊 Ocean</option>
             <option value="thermal">🔥 Thermal</option>
             <option value="neon">💚 Neon</option>
+            <option value="aurora">🌌 Aurora</option>
+            <option value="plasma">🔮 Plasma</option>
             <option value="grayscale">⬜ Grayscale</option>
           </select>
         </div>
