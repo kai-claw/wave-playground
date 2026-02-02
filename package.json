@@ -1,13 +1,25 @@
 {
   "name": "wave-playground",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
+  "description": "Interactive wave physics simulator — drop wave sources, explore interference patterns, slit diffraction, and Doppler effect in real time",
+  "homepage": "https://kai-claw.github.io/wave-playground/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kai-claw/wave-playground.git"
+  },
+  "keywords": ["wave", "physics", "simulation", "interference", "diffraction", "doppler", "react", "canvas", "typescript"],
+  "author": "kai-claw",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview",
+    "deploy": "npm run build && npx gh-pages -d dist"
   },
   "dependencies": {
     "react": "^19.2.0",
@@ -25,6 +37,7 @@
     "globals": "^16.5.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
-    "vite": "^7.2.4"
+    "vite": "^7.2.4",
+    "vitest": "^4.0.18"
   }
 }

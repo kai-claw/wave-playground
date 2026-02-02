@@ -2,12 +2,88 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>wave-playground</title>
+    <title>Wave Playground — Interactive Wave Physics Simulator</title>
+
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="/wave-playground/favicon.svg" />
+
+    <!-- SEO -->
+    <meta name="description" content="Interactive wave physics simulator — drop wave sources, explore interference patterns, slit diffraction, and Doppler effect in real time." />
+    <meta name="keywords" content="wave simulation, physics, interference, diffraction, double slit, Doppler effect, standing waves, React" />
+    <meta name="author" content="kai-claw" />
+    <meta name="theme-color" content="#0a0e1a" />
+    <link rel="canonical" href="https://kai-claw.github.io/wave-playground/" />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Wave Playground — Interactive Wave Physics Simulator" />
+    <meta property="og:description" content="Drop wave sources, explore interference patterns, slit diffraction, and Doppler effect — all in real time." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://kai-claw.github.io/wave-playground/" />
+    <meta property="og:site_name" content="Wave Playground" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Wave Playground — Interactive Wave Physics Simulator" />
+    <meta name="twitter:description" content="Interactive 2D/3D wave simulation with interference, diffraction, and Doppler effect." />
+
+    <!-- JSON-LD -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "WebApplication",
+      "name": "Wave Playground",
+      "description": "Interactive wave physics simulator with interference patterns, slit diffraction, and Doppler effect",
+      "url": "https://kai-claw.github.io/wave-playground/",
+      "applicationCategory": "EducationalApplication",
+      "operatingSystem": "Web",
+      "author": { "@type": "Person", "name": "kai-claw", "url": "https://github.com/kai-claw" },
+      "license": "https://opensource.org/licenses/MIT",
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+    }
+    </script>
+
+    <!-- Loading spinner (inline — fades when React mounts) -->
+    <style>
+      body { margin: 0; background: #0a0e1a; }
+      #loader {
+        position: fixed; inset: 0; display: flex; justify-content: center; align-items: center;
+        z-index: 9999; background: #0a0e1a; transition: opacity 0.5s;
+      }
+      #loader.fade { opacity: 0; pointer-events: none; }
+      .wave-loader {
+        width: 60px; height: 40px; display: flex; align-items: flex-end; gap: 4px;
+      }
+      .wave-loader span {
+        width: 6px; border-radius: 3px; background: #4fc3f7;
+        animation: waveLoad 1.2s ease-in-out infinite;
+      }
+      .wave-loader span:nth-child(1) { height: 12px; animation-delay: 0s; }
+      .wave-loader span:nth-child(2) { height: 24px; animation-delay: 0.15s; }
+      .wave-loader span:nth-child(3) { height: 36px; animation-delay: 0.3s; }
+      .wave-loader span:nth-child(4) { height: 24px; animation-delay: 0.45s; }
+      .wave-loader span:nth-child(5) { height: 12px; animation-delay: 0.6s; }
+      @keyframes waveLoad {
+        0%, 100% { transform: scaleY(0.5); opacity: 0.4; }
+        50% { transform: scaleY(1); opacity: 1; }
+      }
+    </style>
   </head>
   <body>
+    <div id="loader">
+      <div class="wave-loader">
+        <span></span><span></span><span></span><span></span><span></span>
+      </div>
+    </div>
     <div id="root"></div>
+    <noscript>
+      <div style="display:flex;justify-content:center;align-items:center;height:100vh;color:#4fc3f7;font-family:system-ui;background:#0a0e1a;text-align:center;padding:2rem;">
+        <div>
+          <h1 style="font-size:2rem;margin-bottom:1rem;">🌊 Wave Playground</h1>
+          <p>This application requires JavaScript to run. Please enable JavaScript in your browser settings.</p>
+        </div>
+      </div>
+    </noscript>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
