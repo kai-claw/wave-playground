@@ -209,7 +209,8 @@ function App() {
           const ringRadius = 18 + ringProgress * 45;
           const ringAlpha = (1 - ringProgress) * 0.25 * source.amplitude;
           if (ringAlpha > 0.02) {
-            ctx.strokeStyle = `rgba(100, 200, 255, ${ringAlpha.toFixed(3)})`;
+            // Quantize alpha to avoid per-ring toFixed string allocation
+            ctx.strokeStyle = `rgba(100,200,255,${((ringAlpha * 100 + 0.5) | 0) / 100})`;
             ctx.lineWidth = 1.5 * (1 - ringProgress * 0.7);
             ctx.beginPath();
             ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
@@ -229,7 +230,7 @@ function App() {
 
       // Core dot
       const coreR = 2.5 + 1.5 * pulse;
-      ctx.fillStyle = `rgba(255,255,255,${(0.9 + 0.1 * pulse).toFixed(2)})`;
+      ctx.fillStyle = pulse > 0.5 ? 'rgba(255,255,255,0.95)' : 'rgba(255,255,255,0.90)';
       ctx.beginPath();
       ctx.arc(x, y, coreR, 0, Math.PI * 2);
       ctx.fill();
@@ -326,12 +327,14 @@ function App() {
       ctx.stroke();
       ctx.setLineDash([]);
 
-      [{ x: x1, y: y1 }, { x: x2, y: y2 }].forEach(pt => {
-        ctx.fillStyle = 'rgba(255, 200, 50, 0.9)';
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
-        ctx.fill();
-      });
+      // Draw probe endpoints (inline to avoid per-frame array allocation)
+      ctx.fillStyle = 'rgba(255, 200, 50, 0.9)';
+      ctx.beginPath();
+      ctx.arc(x1, y1, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(x2, y2, 5, 0, Math.PI * 2);
+      ctx.fill();
 
       const samples = sim.sampleLine(x1, y1, x2, y2, 128);
       const chartW = 200;
