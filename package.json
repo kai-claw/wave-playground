@@ -1,7 +1,7 @@
 {
   "name": "wave-playground",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "description": "Interactive wave physics simulator — drop wave sources, explore interference patterns, slit diffraction, and Doppler effect in real time",
   "homepage": "https://kai-claw.github.io/wave-playground/",

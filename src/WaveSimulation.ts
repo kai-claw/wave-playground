@@ -218,11 +218,10 @@ export class WaveSimulation {
           4 * cur[idx]
         );
         
-        // Wave equation with amplitude clamping
-        const newValue = 2 * cur[idx] - prev[idx] + c2dt2 * laplacian;
+        // Wave equation with amplitude clamping (conditional > Math.max/min for V8)
+        const newValue = (2 * cur[idx] - prev[idx] + c2dt2 * laplacian) * damp;
         prev[idx] = cur[idx];
-        // Clamp to prevent runaway growth even within CFL bounds
-        cur[idx] = Math.max(-50, Math.min(50, newValue * damp));
+        cur[idx] = newValue > 50 ? 50 : newValue < -50 ? -50 : newValue;
       }
     }
     

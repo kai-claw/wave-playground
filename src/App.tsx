@@ -1,6 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { WaveSimulation } from './WaveSimulation';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { PerformanceMonitor } from './components/PerformanceMonitor';
 import { render2D, render3D } from './renderers';
 import { COLOR_SCHEMES, PRESETS, PRESET_NAMES, CINEMATIC_INTERVAL, DEFAULT_CONTROLS } from './constants';
 import type { Controls, ProbeLine } from './types';
@@ -31,6 +32,10 @@ function App() {
 
   // Energy trail state
   const [energyTrail, setEnergyTrail] = useState(false);
+
+  // Performance degradation state
+  const [perfDegraded, setPerfDegraded] = useState(false);
+  const overlaySkipRef = useRef(0); // throttle overlays when degraded
 
   // Drawing mode state
   const drawPointsRef = useRef<Array<{x: number; y: number}>>([]);
@@ -132,77 +137,101 @@ function App() {
   }, [energyTrail]);
 
   // ──────── Render overlays (sources, walls, probe, HUD) ────────
+  // --- Pre-rendered source glow sprite (offscreen canvas) ---
+  // Eliminates per-source createRadialGradient calls every frame.
+  // Single 64x64 sprite drawn once, stamped per source via drawImage().
+  const sourceGlowRef = useRef<OffscreenCanvas | null>(null);
+  const getSourceGlow = useCallback(() => {
+    if (sourceGlowRef.current) return sourceGlowRef.current;
+    const size = 64;
+    const oc = new OffscreenCanvas(size, size);
+    const octx = oc.getContext('2d');
+    if (!octx) return null;
+    const cx = size / 2;
+    const gradient = octx.createRadialGradient(cx, cx, 0, cx, cx, cx);
+    gradient.addColorStop(0, 'rgba(255,255,255,0.95)');
+    gradient.addColorStop(0.15, 'rgba(200,235,255,0.7)');
+    gradient.addColorStop(0.35, 'rgba(100,200,255,0.45)');
+    gradient.addColorStop(0.65, 'rgba(60,150,220,0.12)');
+    gradient.addColorStop(1, 'rgba(100,200,255,0)');
+    octx.fillStyle = gradient;
+    octx.beginPath();
+    octx.arc(cx, cx, cx, 0, Math.PI * 2);
+    octx.fill();
+    sourceGlowRef.current = oc;
+    return oc;
+  }, []);
+
   const renderOverlays = useCallback((
     ctx: CanvasRenderingContext2D,
     sim: WaveSimulation,
     w: number,
     h: number,
+    skipExpensive: boolean,
   ) => {
     const scheme = COLOR_SCHEMES[controls.colorScheme];
     const t = timeRef.current;
 
-    // Draw orbital paths
-    sim.sources.forEach((source) => {
-      if (source.orbitCenterX != null && source.orbitRadius != null) {
-        const cx = source.orbitCenterX * sim.cellSize;
-        const cy = (source.orbitCenterY ?? source.orbitCenterX) * sim.cellSize;
-        const r = source.orbitRadius * sim.cellSize;
-        ctx.strokeStyle = 'rgba(100, 200, 255, 0.08)';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 6]);
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        // Draw orbit center dot
-        ctx.fillStyle = 'rgba(100, 200, 255, 0.15)';
-        ctx.beginPath();
-        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
+    // Draw orbital paths (skip when degraded — purely decorative)
+    if (!skipExpensive) {
+      sim.sources.forEach((source) => {
+        if (source.orbitCenterX != null && source.orbitRadius != null) {
+          const cx = source.orbitCenterX * sim.cellSize;
+          const cy = (source.orbitCenterY ?? source.orbitCenterX) * sim.cellSize;
+          const r = source.orbitRadius * sim.cellSize;
+          ctx.strokeStyle = 'rgba(100, 200, 255, 0.08)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([4, 6]);
+          ctx.beginPath();
+          ctx.arc(cx, cy, r, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(100, 200, 255, 0.15)';
+          ctx.beginPath();
+          ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      });
+    }
 
-    // Draw sources with pulsing glow and expanding rings
+    // Draw sources — use cached glow sprite instead of per-source gradient creation
+    const glowSprite = getSourceGlow();
     sim.sources.forEach((source) => {
       const x = source.x * sim.cellSize;
       const y = source.y * sim.cellSize;
       const pulse = 0.5 + 0.5 * Math.sin(t * source.frequency + source.phase);
-      const outerR = 10 + 8 * pulse;
-      const coreR = 2.5 + 1.5 * pulse;
-      const glowAlpha = 0.4 + 0.5 * pulse;
 
-      for (let ring = 0; ring < 3; ring++) {
-        const ringPhase = (t * source.frequency * 0.3 + ring * 2.1) % (Math.PI * 2);
-        const ringProgress = ringPhase / (Math.PI * 2);
-        const ringRadius = 18 + ringProgress * 45;
-        const ringAlpha = (1 - ringProgress) * 0.25 * source.amplitude;
-        if (ringAlpha > 0.02) {
-          ctx.strokeStyle = `rgba(100, 200, 255, ${ringAlpha.toFixed(3)})`;
-          ctx.lineWidth = 1.5 * (1 - ringProgress * 0.7);
-          ctx.beginPath();
-          ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
-          ctx.stroke();
+      // Expanding ring waves (skip when degraded)
+      if (!skipExpensive) {
+        for (let ring = 0; ring < 3; ring++) {
+          const ringPhase = (t * source.frequency * 0.3 + ring * 2.1) % (Math.PI * 2);
+          const ringProgress = ringPhase / (Math.PI * 2);
+          const ringRadius = 18 + ringProgress * 45;
+          const ringAlpha = (1 - ringProgress) * 0.25 * source.amplitude;
+          if (ringAlpha > 0.02) {
+            ctx.strokeStyle = `rgba(100, 200, 255, ${ringAlpha.toFixed(3)})`;
+            ctx.lineWidth = 1.5 * (1 - ringProgress * 0.7);
+            ctx.beginPath();
+            ctx.arc(x, y, ringRadius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
         }
       }
 
-      const gradient = ctx.createRadialGradient(x, y, 0, x, y, outerR);
-      gradient.addColorStop(0, `rgba(255,255,255,${(0.85 + 0.15 * pulse).toFixed(2)})`);
-      gradient.addColorStop(0.3, `rgba(100,200,255,${glowAlpha.toFixed(2)})`);
-      gradient.addColorStop(0.7, `rgba(60,150,220,${(glowAlpha * 0.3).toFixed(2)})`);
-      gradient.addColorStop(1, 'rgba(100,200,255,0)');
-      ctx.fillStyle = gradient;
-      ctx.beginPath();
-      ctx.arc(x, y, outerR, 0, Math.PI * 2);
-      ctx.fill();
+      // Glow — stamp pre-rendered sprite (1 drawImage vs 1 createRadialGradient + 4 addColorStop)
+      if (glowSprite) {
+        const outerR = 10 + 8 * pulse;
+        const spriteSize = outerR * 2;
+        ctx.globalAlpha = 0.7 + 0.3 * pulse;
+        ctx.drawImage(glowSprite, x - spriteSize / 2, y - spriteSize / 2, spriteSize, spriteSize);
+        ctx.globalAlpha = 1;
+      }
 
+      // Core dot
+      const coreR = 2.5 + 1.5 * pulse;
       ctx.fillStyle = `rgba(255,255,255,${(0.9 + 0.1 * pulse).toFixed(2)})`;
       ctx.beginPath();
       ctx.arc(x, y, coreR, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = `rgba(200,235,255,${(0.4 * pulse).toFixed(2)})`;
-      ctx.beginPath();
-      ctx.arc(x, y, coreR * 0.5, 0, Math.PI * 2);
       ctx.fill();
     });
 
@@ -378,7 +407,7 @@ function App() {
     const modeLabel = controls.interactionMode === 'impulse' ? '💧' : controls.interactionMode === 'draw' ? '🖌️' : '🔵';
     ctx.fillText(`${modeLabel} Sources: ${sim.sources.length}`, 18, 27);
     ctx.restore();
-  }, [controls.colorScheme, controls.interactionMode, probeLine]);
+  }, [controls.colorScheme, controls.interactionMode, probeLine, getSourceGlow]);
 
   // ──────── Main render ────────
   const render = useCallback((canvas: HTMLCanvasElement, sim: WaveSimulation) => {
@@ -389,13 +418,15 @@ function App() {
     const scheme = COLOR_SCHEMES[controls.colorScheme];
 
     if (controls.visualMode === '2D') {
-      render2D(ctx, sim, w, h, scheme);
+      render2D(ctx, sim, w, h, scheme, controls.colorScheme);
     } else {
-      render3D(ctx, sim, w, h, scheme);
+      render3D(ctx, sim, w, h, scheme, controls.colorScheme);
     }
 
-    renderOverlays(ctx, sim, w, h);
-  }, [controls.visualMode, controls.colorScheme, renderOverlays]);
+    // Throttle expensive overlays when degraded (render every 3rd frame)
+    const skipExpensive = perfDegraded && (overlaySkipRef.current++ % 3 !== 0);
+    renderOverlays(ctx, sim, w, h, skipExpensive);
+  }, [controls.visualMode, controls.colorScheme, renderOverlays, perfDegraded]);
 
   // ──────── Animation loop ────────
   useEffect(() => {
@@ -804,11 +835,20 @@ function App() {
         {!showHelp && !cinematic && (
           <div className="instructions-bar">
             <span><kbd>Space</kbd> Play/Pause</span>
-            <span><kbd>C</kbd> Clear</span>
             <span><kbd>H</kbd> Help</span>
+            <span><kbd>A</kbd> Autoplay</span>
+            <span><kbd>T</kbd> Trails</span>
             <span><kbd>1</kbd>–<kbd>0</kbd> Presets</span>
           </div>
         )}
+
+        <PerformanceMonitor onDegradationChange={setPerfDegraded}>
+          {({ fps, degraded }) => (
+            <div className={`fps-badge ${degraded ? 'degraded' : fps < 45 ? 'warn' : ''}`}>
+              {Math.round(fps)} FPS{degraded && ' ⚠'}
+            </div>
+          )}
+        </PerformanceMonitor>
       </div>
 
       <button
@@ -971,6 +1011,7 @@ function App() {
         </div>
 
         <div className="footer">
+          <span className="version-badge">v1.0.0</span>
           <a href="https://github.com/kai-claw/wave-playground" target="_blank" rel="noopener noreferrer">GitHub ↗</a>
         </div>
       </div>
