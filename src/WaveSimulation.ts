@@ -7,6 +7,12 @@ export interface WaveSource {
   active: boolean;
   vx?: number; // velocity for Doppler effect
   vy?: number;
+  // Orbital motion
+  orbitCenterX?: number; // grid coords
+  orbitCenterY?: number;
+  orbitRadius?: number;  // grid units
+  orbitSpeed?: number;   // radians per step
+  orbitAngle?: number;   // current angle
 }
 
 export interface Wall {
@@ -28,6 +34,11 @@ export class WaveSimulation {
   current: Float32Array;
   previous: Float32Array;
   velocity: Float32Array;
+  
+  // Energy trail (max hold) — tracks peak amplitude with slow decay
+  energyMap: Float32Array;
+  energyTrailEnabled: boolean = false;
+  energyDecay: number = 0.997; // slow fade for long-exposure effect
   
   // Simulation parameters
   waveSpeed: number = 0.5;
@@ -53,6 +64,7 @@ export class WaveSimulation {
     this.current = new Float32Array(size);
     this.previous = new Float32Array(size);
     this.velocity = new Float32Array(size);
+    this.energyMap = new Float32Array(size);
   }
   
   getIndex(x: number, y: number): number {
@@ -84,6 +96,7 @@ export class WaveSimulation {
     this.current.fill(0);
     this.previous.fill(0);
     this.velocity.fill(0);
+    this.energyMap.fill(0);
     this.sources = [];
     this.walls = [];
   }
@@ -94,6 +107,20 @@ export class WaveSimulation {
     const subSteps = Math.max(1, Math.ceil(cflRatio / WaveSimulation.CFL_LIMIT));
     const subDt = this.dt / subSteps;
     
+    // Update orbital sources
+    for (const source of this.sources) {
+      if (source.orbitCenterX != null && source.orbitRadius != null && source.orbitSpeed != null) {
+        source.orbitAngle = (source.orbitAngle ?? 0) + source.orbitSpeed;
+        const newX = source.orbitCenterX + source.orbitRadius * Math.cos(source.orbitAngle);
+        const newY = (source.orbitCenterY ?? source.orbitCenterX) + source.orbitRadius * Math.sin(source.orbitAngle);
+        // Set velocity for Doppler effect
+        source.vx = (newX - source.x) * 0.1;
+        source.vy = (newY - source.y) * 0.1;
+        source.x = newX;
+        source.y = newY;
+      }
+    }
+
     // Add wave sources (once per full step, not per sub-step)
     for (const source of this.sources) {
       if (!source.active) continue;
@@ -107,9 +134,11 @@ export class WaveSimulation {
         this.current[idx] += source.amplitude * Math.sin(time * freq + source.phase);
       }
       
-      // Update source position for Doppler effect
-      if (source.vx) source.x += source.vx * this.dt;
-      if (source.vy) source.y += source.vy * this.dt;
+      // Update source position for Doppler/manual velocity
+      if (!source.orbitCenterX) {
+        if (source.vx) source.x += source.vx * this.dt;
+        if (source.vy) source.y += source.vy * this.dt;
+      }
     }
     
     // Sub-stepped wave equation: u_tt = c²∇²u
@@ -117,6 +146,14 @@ export class WaveSimulation {
       this.substep(subDt);
     }
     
+    // Update energy trail map (max hold with slow decay)
+    if (this.energyTrailEnabled) {
+      for (let i = 0; i < this.current.length; i++) {
+        const absVal = Math.abs(this.current[i]);
+        this.energyMap[i] = Math.max(this.energyMap[i] * this.energyDecay, absVal);
+      }
+    }
+
     // NaN/Infinity recovery guard
     this.stabilityGuard();
   }
@@ -286,5 +323,38 @@ export class WaveSimulation {
     if (gx < 0 || gx >= this.cols || gy < 0 || gy >= this.rows) return 0;
     
     return this.current[this.getIndex(gx, gy)];
+  }
+
+  /** Get energy trail value at a pixel coordinate */
+  getEnergyValue(x: number, y: number): number {
+    const gx = Math.floor(x / this.cellSize);
+    const gy = Math.floor(y / this.cellSize);
+    if (gx < 0 || gx >= this.cols || gy < 0 || gy >= this.rows) return 0;
+    return this.energyMap[this.getIndex(gx, gy)];
+  }
+
+  /** Add a source that orbits in a circle — creates stunning Doppler spiral patterns */
+  addOrbitalSource(
+    centerX: number, centerY: number,
+    radius: number, speed: number,
+    frequency: number = 0.05, amplitude: number = 1,
+    startAngle: number = 0,
+  ): void {
+    const cx = centerX / this.cellSize;
+    const cy = centerY / this.cellSize;
+    const r = radius / this.cellSize;
+    this.sources.push({
+      x: cx + r * Math.cos(startAngle),
+      y: cy + r * Math.sin(startAngle),
+      frequency,
+      amplitude,
+      phase: 0,
+      active: true,
+      orbitCenterX: cx,
+      orbitCenterY: cy,
+      orbitRadius: r,
+      orbitSpeed: speed,
+      orbitAngle: startAngle,
+    });
   }
 }

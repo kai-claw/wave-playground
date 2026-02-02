@@ -540,6 +540,38 @@ select:focus {
   100% { transform: scale(1); }
 }
 
+/* ── Effect button ── */
+.effect-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 200, 50, 0.12);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: #bbb;
+  background: rgba(255, 200, 50, 0.04);
+  transition: all 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.effect-btn:hover {
+  background: rgba(255, 200, 50, 0.1);
+  border-color: rgba(255, 200, 50, 0.25);
+  color: #fff;
+}
+
+.effect-btn:active {
+  transform: scale(0.95);
+}
+
+.effect-btn.active {
+  background: rgba(255, 200, 50, 0.12);
+  border-color: rgba(255, 200, 50, 0.4);
+  color: #ffd54f;
+  box-shadow: 0 0 14px rgba(255, 200, 50, 0.15);
+  animation: modeActivate 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
 /* ── Probe button ── */
 .probe-row {
   display: flex;

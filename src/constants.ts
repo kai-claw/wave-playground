@@ -90,6 +90,25 @@ export const PRESETS: Record<string, PresetDef> = {
     sources: [{ x: 0.05, y: 0.5 }],
     description: 'Waves channeled through a corridor — observe waveguide modes',
   },
+  'Orbital Dance': {
+    walls: [],
+    sources: [],
+    orbital: [
+      { cx: 0.5, cy: 0.5, radius: 0.15, speed: 0.03, startAngle: 0 },
+      { cx: 0.5, cy: 0.5, radius: 0.15, speed: 0.03, startAngle: Math.PI },
+    ],
+    description: 'Two sources orbiting in a circle — mesmerizing Doppler spirals',
+  },
+  'Spirograph': {
+    walls: [],
+    sources: [],
+    orbital: [
+      { cx: 0.35, cy: 0.5, radius: 0.1, speed: 0.025, startAngle: 0 },
+      { cx: 0.65, cy: 0.5, radius: 0.1, speed: -0.025, startAngle: 0 },
+      { cx: 0.5, cy: 0.35, radius: 0.08, speed: 0.04, startAngle: Math.PI / 2 },
+    ],
+    description: 'Counter-rotating orbital sources weave intricate interference lace',
+  },
 };
 
 export const PRESET_NAMES = Object.keys(PRESETS);

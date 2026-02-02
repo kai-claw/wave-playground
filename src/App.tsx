@@ -29,6 +29,9 @@ function App() {
   const cinematicIndexRef = useRef(0);
   const [cinematicProgress, setCinematicProgress] = useState(0);
 
+  // Energy trail state
+  const [energyTrail, setEnergyTrail] = useState(false);
+
   // Drawing mode state
   const drawPointsRef = useRef<Array<{x: number; y: number}>>([]);
   const isDrawingRef = useRef(false);
@@ -120,6 +123,14 @@ function App() {
     }
   }, [controls.waveSpeed, controls.damping, controls.reflectiveBoundaries]);
 
+  // Sync energy trail
+  useEffect(() => {
+    if (simulationRef.current) {
+      simulationRef.current.energyTrailEnabled = energyTrail;
+      if (!energyTrail) simulationRef.current.energyMap.fill(0);
+    }
+  }, [energyTrail]);
+
   // ──────── Render overlays (sources, walls, probe, HUD) ────────
   const renderOverlays = useCallback((
     ctx: CanvasRenderingContext2D,
@@ -129,6 +140,27 @@ function App() {
   ) => {
     const scheme = COLOR_SCHEMES[controls.colorScheme];
     const t = timeRef.current;
+
+    // Draw orbital paths
+    sim.sources.forEach((source) => {
+      if (source.orbitCenterX != null && source.orbitRadius != null) {
+        const cx = source.orbitCenterX * sim.cellSize;
+        const cy = (source.orbitCenterY ?? source.orbitCenterX) * sim.cellSize;
+        const r = source.orbitRadius * sim.cellSize;
+        ctx.strokeStyle = 'rgba(100, 200, 255, 0.08)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 6]);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // Draw orbit center dot
+        ctx.fillStyle = 'rgba(100, 200, 255, 0.15)';
+        ctx.beginPath();
+        ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
 
     // Draw sources with pulsing glow and expanding rings
     sim.sources.forEach((source) => {
@@ -645,6 +677,7 @@ function App() {
           setControls(prev => ({ ...prev, interactionMode: prev.interactionMode === 'draw' ? 'source' : 'draw' }));
           break;
         case 'a': case 'A': setCinematic(c => !c); break;
+        case 't': case 'T': setEnergyTrail(t => !t); break;
         case 'l': case 'L':
           if (isPlacingProbeRef.current) {
             isPlacingProbeRef.current = false;
@@ -663,6 +696,8 @@ function App() {
         case '6': loadPreset('Corner Reflector'); break;
         case '7': loadPreset('Triple Source'); break;
         case '8': loadPreset('Waveguide'); break;
+        case '9': loadPreset('Orbital Dance'); break;
+        case '0': loadPreset('Spirograph'); break;
       }
     };
 
@@ -697,6 +732,17 @@ function App() {
     const frequency = 2 * Math.PI / controls.wavelength;
     preset.sources?.forEach(s => {
       sim.addSource(s.x * w, s.y * h, s.freq ?? frequency, controls.amplitude);
+    });
+
+    // Add orbital sources
+    preset.orbital?.forEach(o => {
+      sim.addOrbitalSource(
+        o.cx * w, o.cy * h,
+        o.radius * Math.min(w, h),
+        o.speed,
+        frequency, controls.amplitude,
+        o.startAngle ?? 0,
+      );
     });
 
     setSourceCount(sim.sources.length);
@@ -760,7 +806,7 @@ function App() {
             <span><kbd>Space</kbd> Play/Pause</span>
             <span><kbd>C</kbd> Clear</span>
             <span><kbd>H</kbd> Help</span>
-            <span><kbd>1</kbd>–<kbd>8</kbd> Presets</span>
+            <span><kbd>1</kbd>–<kbd>0</kbd> Presets</span>
           </div>
         )}
       </div>
@@ -828,6 +874,17 @@ function App() {
           <div className="button-row">
             <button className={controls.visualMode === '2D' ? 'active' : ''} onClick={() => setControls(prev => ({ ...prev, visualMode: '2D' }))}>2D Heatmap</button>
             <button className={controls.visualMode === '3D' ? 'active' : ''} onClick={() => setControls(prev => ({ ...prev, visualMode: '3D' }))}>3D Surface</button>
+          </div>
+        </div>
+
+        <div className="control-group">
+          <label>Effects</label>
+          <div className="button-row">
+            <button
+              className={`effect-btn ${energyTrail ? 'active' : ''}`}
+              onClick={() => setEnergyTrail(t => !t)}
+              title="Energy trails — long-exposure glow showing wave history (key T)"
+            >✨ Energy Trail</button>
           </div>
         </div>
 
@@ -908,7 +965,8 @@ function App() {
             <p><kbd>L</kbd> Toggle Probe line</p>
             <p><kbd>H</kbd> Toggle help</p>
             <p><kbd>P</kbd> Toggle panel</p>
-            <p><kbd>1</kbd>–<kbd>8</kbd> Load presets</p>
+            <p><kbd>T</kbd> Toggle energy trails</p>
+            <p><kbd>1</kbd>–<kbd>0</kbd> Load presets</p>
           </div>
         </div>
 

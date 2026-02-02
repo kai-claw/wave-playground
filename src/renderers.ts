@@ -7,6 +7,7 @@ import type { ColorScheme } from './types';
 /**
  * Render the wave field as a 2D color-mapped heatmap.
  * Each pixel maps directly to a simulation cell value.
+ * When energyTrail is true, blends the max-hold energy map as a warm glow layer.
  */
 export function render2D(
   ctx: CanvasRenderingContext2D,
@@ -18,6 +19,7 @@ export function render2D(
   const imageData = ctx.createImageData(w, h);
   const data = imageData.data;
   const [bgR, bgG, bgB] = scheme.bg;
+  const showEnergy = sim.energyTrailEnabled;
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -25,21 +27,35 @@ export function render2D(
       const intensity = Math.min(1, Math.abs(value) * 0.5);
       const idx = (y * w + x) * 4;
 
+      let r: number, g: number, b: number;
+
       if (intensity < 0.01) {
-        data[idx] = bgR;
-        data[idx + 1] = bgG;
-        data[idx + 2] = bgB;
+        r = bgR; g = bgG; b = bgB;
       } else if (value > 0) {
-        const [r, g, b] = scheme.positive(intensity);
-        data[idx] = r;
-        data[idx + 1] = g;
-        data[idx + 2] = b;
+        [r, g, b] = scheme.positive(intensity);
       } else {
-        const [r, g, b] = scheme.negative(intensity);
-        data[idx] = r;
-        data[idx + 1] = g;
-        data[idx + 2] = b;
+        [r, g, b] = scheme.negative(intensity);
       }
+
+      // Blend energy trail as warm glow overlay
+      if (showEnergy) {
+        const energy = sim.getEnergyValue(x, y);
+        const eIntensity = Math.min(1, energy * 0.4);
+        if (eIntensity > 0.005) {
+          // Warm white-gold glow: lerp toward energy color
+          const eR = 255;
+          const eG = 220 + 35 * eIntensity;
+          const eB = 140 + 60 * (1 - eIntensity);
+          const blend = eIntensity * 0.35; // subtle overlay
+          r = Math.min(255, Math.floor(r * (1 - blend) + eR * blend));
+          g = Math.min(255, Math.floor(g * (1 - blend) + eG * blend));
+          b = Math.min(255, Math.floor(b * (1 - blend) + eB * blend));
+        }
+      }
+
+      data[idx] = r;
+      data[idx + 1] = g;
+      data[idx + 2] = b;
       data[idx + 3] = 255;
     }
   }

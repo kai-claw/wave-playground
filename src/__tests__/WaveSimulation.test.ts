@@ -475,4 +475,95 @@ describe('WaveSimulation', () => {
       expect(hasNonZero).toBe(true);
     });
   });
+
+  describe('Energy Trail (Max Hold)', () => {
+    it('tracks peak amplitude when enabled', () => {
+      sim.energyTrailEnabled = true;
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 50; i++) sim.step(i);
+      const energy = sim.getEnergyValue(100, 100);
+      expect(energy).toBeGreaterThan(0);
+    });
+
+    it('does not track when disabled', () => {
+      sim.energyTrailEnabled = false;
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 50; i++) sim.step(i);
+      const energy = sim.getEnergyValue(100, 100);
+      expect(energy).toBe(0);
+    });
+
+    it('energy map decays when wave field is zero', () => {
+      sim.energyTrailEnabled = true;
+      // Manually inject energy into the energy map
+      const idx = sim.getIndex(25, 25);
+      sim.energyMap[idx] = 10.0;
+      // Step with no sources — wave field is all zeros
+      // Energy map should decay by energyDecay each step
+      for (let i = 0; i < 100; i++) sim.step(i);
+      const decayed = sim.energyMap[idx];
+      // After 100 steps of decay: 10 * 0.997^100 ≈ 7.4
+      expect(decayed).toBeLessThan(10.0);
+      expect(decayed).toBeGreaterThan(5.0); // not fully gone yet
+    });
+
+    it('is cleared on sim.clear()', () => {
+      sim.energyTrailEnabled = true;
+      sim.addSource(100, 100, 0.1, 2);
+      for (let i = 0; i < 30; i++) sim.step(i);
+      expect(sim.getEnergyValue(100, 100)).toBeGreaterThan(0);
+      sim.clear();
+      expect(sim.getEnergyValue(100, 100)).toBe(0);
+    });
+
+    it('returns 0 for out-of-bounds coordinates', () => {
+      sim.energyTrailEnabled = true;
+      expect(sim.getEnergyValue(-10, -10)).toBe(0);
+      expect(sim.getEnergyValue(9999, 9999)).toBe(0);
+    });
+  });
+
+  describe('Orbital Sources', () => {
+    it('creates orbital source with correct initial position', () => {
+      sim.addOrbitalSource(200, 150, 50, 0.05, 0.1, 1, 0);
+      expect(sim.sources).toHaveLength(1);
+      const src = sim.sources[0];
+      expect(src.orbitCenterX).toBeDefined();
+      expect(src.orbitRadius).toBeDefined();
+      expect(src.orbitSpeed).toBe(0.05);
+      // Initial position should be at angle 0 (centerX + radius)
+      const cx = 200 / sim.cellSize;
+      const r = 50 / sim.cellSize;
+      expect(src.x).toBeCloseTo(cx + r, 1);
+    });
+
+    it('source moves along orbit during stepping', () => {
+      sim.addOrbitalSource(200, 150, 50, 0.1, 0.1, 1, 0);
+      const initX = sim.sources[0].x;
+      const initY = sim.sources[0].y;
+      for (let i = 0; i < 20; i++) sim.step(i);
+      // Position should have changed
+      expect(sim.sources[0].x).not.toBeCloseTo(initX, 1);
+      expect(sim.sources[0].y).not.toBeCloseTo(initY, 1);
+    });
+
+    it('orbital source generates Doppler velocity', () => {
+      sim.addOrbitalSource(200, 150, 50, 0.1, 0.1, 1, 0);
+      for (let i = 0; i < 5; i++) sim.step(i);
+      const src = sim.sources[0];
+      // Should have non-zero velocity from orbital motion
+      expect(src.vx !== 0 || src.vy !== 0).toBe(true);
+    });
+
+    it('counter-rotating orbits remain stable', () => {
+      sim.addOrbitalSource(200, 150, 50, 0.03, 0.1, 1, 0);
+      sim.addOrbitalSource(200, 150, 50, -0.03, 0.1, 1, Math.PI);
+      for (let i = 0; i < 200; i++) sim.step(i);
+      // Both sources should still be finite
+      sim.sources.forEach(s => {
+        expect(isFinite(s.x)).toBe(true);
+        expect(isFinite(s.y)).toBe(true);
+      });
+    });
+  });
 });

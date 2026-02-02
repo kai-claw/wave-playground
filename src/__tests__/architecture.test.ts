@@ -22,8 +22,8 @@ describe('Module Architecture', () => {
 
   it('constants module exports all data', () => {
     expect(Object.keys(COLOR_SCHEMES)).toHaveLength(6);
-    expect(Object.keys(PRESETS)).toHaveLength(8);
-    expect(PRESET_NAMES).toHaveLength(8);
+    expect(Object.keys(PRESETS)).toHaveLength(10);
+    expect(PRESET_NAMES).toHaveLength(10);
     expect(CINEMATIC_INTERVAL).toBe(12000);
     expect(DEFAULT_CONTROLS).toBeDefined();
   });
@@ -95,11 +95,12 @@ describe('Presets', () => {
     });
   });
 
-  it('all presets have sources or walls', () => {
+  it('all presets have sources, walls, or orbital sources', () => {
     Object.entries(PRESETS).forEach(([_name, preset]) => {
       const hasSources = preset.sources && preset.sources.length > 0;
       const hasWalls = preset.walls && preset.walls.length > 0;
-      expect(hasSources || hasWalls).toBe(true);
+      const hasOrbital = preset.orbital && preset.orbital.length > 0;
+      expect(hasSources || hasWalls || hasOrbital).toBe(true);
     });
   });
 
@@ -147,13 +148,30 @@ describe('Presets', () => {
     expect(PRESET_NAMES).toEqual(Object.keys(PRESETS));
   });
 
-  it('all 8 presets are present', () => {
+  it('all 10 presets are present', () => {
     const expected = [
       'Double Slit', 'Single Slit', 'Ripple Tank', 'Two Sources',
       'Standing Waves', 'Corner Reflector', 'Triple Source', 'Waveguide',
+      'Orbital Dance', 'Spirograph',
     ];
     expected.forEach(name => {
       expect(PRESETS[name]).toBeDefined();
+    });
+  });
+
+  it('orbital presets have valid orbital definitions', () => {
+    const orbitalPresets = Object.entries(PRESETS).filter(([, p]) => p.orbital && p.orbital.length > 0);
+    expect(orbitalPresets.length).toBeGreaterThanOrEqual(2);
+    orbitalPresets.forEach(([, preset]) => {
+      preset.orbital!.forEach(o => {
+        expect(o.cx).toBeGreaterThanOrEqual(0);
+        expect(o.cx).toBeLessThanOrEqual(1);
+        expect(o.cy).toBeGreaterThanOrEqual(0);
+        expect(o.cy).toBeLessThanOrEqual(1);
+        expect(o.radius).toBeGreaterThan(0);
+        expect(o.radius).toBeLessThanOrEqual(0.5);
+        expect(o.speed).not.toBe(0);
+      });
     });
   });
 });

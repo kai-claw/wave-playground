@@ -29,6 +29,9 @@ export interface PresetDef {
   }>;
   reflective?: boolean;
   sources?: Array<{ x: number; y: number; freq?: number }>;
+  orbital?: Array<{
+    cx: number; cy: number; radius: number; speed: number; startAngle?: number;
+  }>;
   description: string;
 }
 
