@@ -1,0 +1,18 @@
+{
+  "name": "Wave Playground",
+  "short_name": "WavePlay",
+  "description": "Interactive wave physics simulator — interference, diffraction, Doppler effect in real time",
+  "start_url": "/wave-playground/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#4fc3f7",
+  "categories": ["education", "entertainment", "utilities"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
