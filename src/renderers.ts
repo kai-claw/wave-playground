@@ -4,10 +4,19 @@
 import type { WaveSimulation } from './WaveSimulation';
 import type { ColorScheme } from './types';
 
+// Pre-allocated ImageData reuse — avoids creating new ImageData every frame
+let cachedImageData: ImageData | null = null;
+let cachedW = 0;
+let cachedH = 0;
+
+// Pre-allocated 3D height buffer — avoids nested array allocation per frame
+let heightBuffer: Float32Array | null = null;
+
 /**
  * Render the wave field as a 2D color-mapped heatmap.
- * Each pixel maps directly to a simulation cell value.
- * When energyTrail is true, blends the max-hold energy map as a warm glow layer.
+ * OPTIMIZED: reads directly from sim.current/energyMap Float32Arrays,
+ * eliminating per-pixel getValue()/getEnergyValue() function call overhead.
+ * Reuses ImageData across frames.
  */
 export function render2D(
   ctx: CanvasRenderingContext2D,
@@ -16,50 +25,88 @@ export function render2D(
   h: number,
   scheme: ColorScheme,
 ): void {
-  const imageData = ctx.createImageData(w, h);
-  const data = imageData.data;
-  const [bgR, bgG, bgB] = scheme.bg;
+  // Reuse ImageData when dimensions match (avoids ~2MB allocation per frame)
+  if (!cachedImageData || cachedW !== w || cachedH !== h) {
+    cachedImageData = ctx.createImageData(w, h);
+    cachedW = w;
+    cachedH = h;
+  }
+  const data = cachedImageData.data;
+  const bgR = scheme.bg[0];
+  const bgG = scheme.bg[1];
+  const bgB = scheme.bg[2];
   const showEnergy = sim.energyTrailEnabled;
 
+  // Direct array access — bypass getValue()/getEnergyValue() overhead
+  const current = sim.current;
+  const energyMap = sim.energyMap;
+  const cellSize = sim.cellSize;
+  const cols = sim.cols;
+  const rows = sim.rows;
+  const invCellSize = 1 / cellSize;
+
+  let prevGy = -1;
+  let rowOffset = 0;
+
   for (let y = 0; y < h; y++) {
+    // Compute grid Y once per scanline (same for all pixels in row if cellSize > 1)
+    const gy = (y * invCellSize) | 0; // fast floor
+    if (gy !== prevGy) {
+      rowOffset = gy < rows ? gy * cols : -1;
+      prevGy = gy;
+    }
+    const pixelRowOffset = y * w;
+
     for (let x = 0; x < w; x++) {
-      const value = sim.getValue(x, y);
-      const intensity = Math.min(1, Math.abs(value) * 0.5);
-      const idx = (y * w + x) * 4;
+      const gx = (x * invCellSize) | 0;
+      const idx4 = (pixelRowOffset + x) << 2; // * 4 via shift
 
       let r: number, g: number, b: number;
 
-      if (intensity < 0.01) {
+      if (rowOffset < 0 || gx >= cols) {
         r = bgR; g = bgG; b = bgB;
-      } else if (value > 0) {
-        [r, g, b] = scheme.positive(intensity);
       } else {
-        [r, g, b] = scheme.negative(intensity);
-      }
+        const gridIdx = rowOffset + gx;
+        const value = current[gridIdx];
+        const absVal = value < 0 ? -value : value;
+        const intensity = absVal > 2 ? 1 : absVal * 0.5;
 
-      // Blend energy trail as warm glow overlay
-      if (showEnergy) {
-        const energy = sim.getEnergyValue(x, y);
-        const eIntensity = Math.min(1, energy * 0.4);
-        if (eIntensity > 0.005) {
-          // Warm white-gold glow: lerp toward energy color
-          const eR = 255;
-          const eG = 220 + 35 * eIntensity;
-          const eB = 140 + 60 * (1 - eIntensity);
-          const blend = eIntensity * 0.35; // subtle overlay
-          r = Math.min(255, Math.floor(r * (1 - blend) + eR * blend));
-          g = Math.min(255, Math.floor(g * (1 - blend) + eG * blend));
-          b = Math.min(255, Math.floor(b * (1 - blend) + eB * blend));
+        if (intensity < 0.01) {
+          r = bgR; g = bgG; b = bgB;
+        } else if (value > 0) {
+          const c = scheme.positive(intensity);
+          r = c[0]; g = c[1]; b = c[2];
+        } else {
+          const c = scheme.negative(intensity);
+          r = c[0]; g = c[1]; b = c[2];
+        }
+
+        // Blend energy trail as warm glow overlay
+        if (showEnergy) {
+          const energy = energyMap[gridIdx];
+          const eIntensity = energy > 2.5 ? 1 : energy * 0.4;
+          if (eIntensity > 0.005) {
+            const blend = eIntensity * 0.35;
+            const invBlend = 1 - blend;
+            const eG = 220 + 35 * eIntensity;
+            const eB = 140 + 60 * (1 - eIntensity);
+            r = (r * invBlend + 255 * blend) | 0;
+            g = (g * invBlend + eG * blend) | 0;
+            b = (b * invBlend + eB * blend) | 0;
+            if (r > 255) r = 255;
+            if (g > 255) g = 255;
+            if (b > 255) b = 255;
+          }
         }
       }
 
-      data[idx] = r;
-      data[idx + 1] = g;
-      data[idx + 2] = b;
-      data[idx + 3] = 255;
+      data[idx4] = r;
+      data[idx4 + 1] = g;
+      data[idx4 + 2] = b;
+      data[idx4 + 3] = 255;
     }
   }
-  ctx.putImageData(imageData, 0, 0);
+  ctx.putImageData(cachedImageData, 0, 0);
 }
 
 /**
@@ -94,24 +141,38 @@ export function render3D(
     return [sx, sy];
   };
 
-  // Build height map from simulation
-  const heights: number[][] = [];
+  // Build height map from simulation — flat Float32Array (avoids nested array allocation)
+  const heightLen = gridW * gridH;
+  if (!heightBuffer || heightBuffer.length < heightLen) {
+    heightBuffer = new Float32Array(heightLen);
+  }
+  const current = sim.current;
+  const cellSize = sim.cellSize;
+  const cols = sim.cols;
+  const rows = sim.rows;
+  const stepOverCell = step / cellSize;
   for (let gy = 0; gy < gridH; gy++) {
-    heights[gy] = [];
+    const simRow = ((gy * stepOverCell) | 0);
+    const hRow = gy * gridW;
     for (let gx = 0; gx < gridW; gx++) {
-      const simX = gx * step;
-      const simY = gy * step;
-      heights[gy][gx] = sim.getValue(simX, simY) * heightScale;
+      const simCol = ((gx * stepOverCell) | 0);
+      heightBuffer[hRow + gx] = (simRow < rows && simCol < cols)
+        ? current[simRow * cols + simCol] * heightScale
+        : 0;
     }
   }
+  // Alias for readability
+  const heights = heightBuffer;
 
   // Draw from back to front (painter's algorithm)
   for (let gy = 0; gy < gridH - 1; gy++) {
+    const hRow = gy * gridW;
+    const hRowNext = (gy + 1) * gridW;
     for (let gx = 0; gx < gridW - 1; gx++) {
-      const h0 = heights[gy][gx];
-      const h1 = heights[gy][gx + 1];
-      const h2 = heights[gy + 1][gx + 1];
-      const h3 = heights[gy + 1][gx];
+      const h0 = heights[hRow + gx];
+      const h1 = heights[hRow + gx + 1];
+      const h2 = heights[hRowNext + gx + 1];
+      const h3 = heights[hRowNext + gx];
 
       const avgH = (h0 + h1 + h2 + h3) / 4;
       const normalizedH = Math.min(1, Math.abs(avgH) / (heightScale * 0.4));
@@ -150,9 +211,10 @@ export function render3D(
   ctx.strokeStyle = 'rgba(255,255,255,0.06)';
   ctx.lineWidth = 0.5;
   for (let gy = 0; gy < gridH; gy += 3) {
+    const hRow = gy * gridW;
     ctx.beginPath();
     for (let gx = 0; gx < gridW; gx++) {
-      const [sx, sy] = project(gx, gy, heights[gy]?.[gx] ?? 0);
+      const [sx, sy] = project(gx, gy, heights[hRow + gx] ?? 0);
       if (gx === 0) ctx.moveTo(sx, sy);
       else ctx.lineTo(sx, sy);
     }

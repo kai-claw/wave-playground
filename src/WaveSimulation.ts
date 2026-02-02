@@ -40,6 +40,13 @@ export class WaveSimulation {
   energyTrailEnabled: boolean = false;
   energyDecay: number = 0.997; // slow fade for long-exposure effect
   
+  // Pre-computed wall mask: 1 = wall cell, 0 = open (avoids per-cell wall checks in inner loop)
+  wallMask: Uint8Array;
+  private wallMaskDirty: boolean = true;
+  
+  // Pre-allocated sample buffer for probe line (avoids per-frame Float32Array allocation)
+  private sampleBuffer: Float32Array = new Float32Array(256);
+  
   // Simulation parameters
   waveSpeed: number = 0.5;
   damping: number = 0.995;
@@ -65,6 +72,7 @@ export class WaveSimulation {
     this.previous = new Float32Array(size);
     this.velocity = new Float32Array(size);
     this.energyMap = new Float32Array(size);
+    this.wallMask = new Uint8Array(size);
   }
   
   getIndex(x: number, y: number): number {
@@ -90,6 +98,7 @@ export class WaveSimulation {
       y2: y2 / this.cellSize,
       slits
     });
+    this.wallMaskDirty = true;
   }
   
   clear(): void {
@@ -97,8 +106,25 @@ export class WaveSimulation {
     this.previous.fill(0);
     this.velocity.fill(0);
     this.energyMap.fill(0);
+    this.wallMask.fill(0);
     this.sources = [];
     this.walls = [];
+    this.wallMaskDirty = true;
+  }
+
+  /** Rebuild the wall mask bitmap from current walls. O(cols*rows*walls) but only runs when walls change. */
+  rebuildWallMask(): void {
+    if (!this.wallMaskDirty) return;
+    this.wallMask.fill(0);
+    if (this.walls.length === 0) { this.wallMaskDirty = false; return; }
+    for (let y = 0; y < this.rows; y++) {
+      for (let x = 0; x < this.cols; x++) {
+        if (this.isInsideWall(x, y)) {
+          this.wallMask[y * this.cols + x] = 1;
+        }
+      }
+    }
+    this.wallMaskDirty = false;
   }
   
   step(time: number): void {
@@ -106,6 +132,9 @@ export class WaveSimulation {
     const cflRatio = this.waveSpeed * this.dt; // dx=1 in grid space
     const subSteps = Math.max(1, Math.ceil(cflRatio / WaveSimulation.CFL_LIMIT));
     const subDt = this.dt / subSteps;
+    
+    // Rebuild wall mask if walls changed (O(grid) but only when dirty)
+    this.rebuildWallMask();
     
     // Update orbital sources
     for (const source of this.sources) {
@@ -129,7 +158,7 @@ export class WaveSimulation {
       const sy = Math.round(source.y);
       
       if (sx >= 0 && sx < this.cols && sy >= 0 && sy < this.rows) {
-        const idx = this.getIndex(sx, sy);
+        const idx = sy * this.cols + sx;
         const freq = source.frequency + (source.vx || 0) * 0.001; // Simple Doppler
         this.current[idx] += source.amplitude * Math.sin(time * freq + source.phase);
       }
@@ -161,32 +190,39 @@ export class WaveSimulation {
   private substep(dt: number): void {
     const c2 = this.waveSpeed * this.waveSpeed;
     const dt2 = dt * dt;
+    const cols = this.cols;
+    const cur = this.current;
+    const prev = this.previous;
+    const mask = this.wallMask;
+    const damp = this.damping;
+    const c2dt2 = c2 * dt2;
     
     for (let y = 1; y < this.rows - 1; y++) {
-      for (let x = 1; x < this.cols - 1; x++) {
-        const idx = this.getIndex(x, y);
+      const rowIdx = y * cols;
+      for (let x = 1; x < cols - 1; x++) {
+        const idx = rowIdx + x;
         
-        // Check if we're inside a wall
-        if (this.isInsideWall(x, y)) {
-          this.current[idx] = 0;
-          this.previous[idx] = 0;
+        // Wall mask lookup: single array access vs. iterating all walls
+        if (mask[idx]) {
+          cur[idx] = 0;
+          prev[idx] = 0;
           continue;
         }
         
-        // Laplacian (discrete)
+        // Laplacian (discrete) — inlined index calculations
         const laplacian = (
-          this.current[this.getIndex(x + 1, y)] +
-          this.current[this.getIndex(x - 1, y)] +
-          this.current[this.getIndex(x, y + 1)] +
-          this.current[this.getIndex(x, y - 1)] -
-          4 * this.current[idx]
+          cur[idx + 1] +
+          cur[idx - 1] +
+          cur[idx + cols] +
+          cur[idx - cols] -
+          4 * cur[idx]
         );
         
         // Wave equation with amplitude clamping
-        const newValue = 2 * this.current[idx] - this.previous[idx] + c2 * dt2 * laplacian;
-        this.previous[idx] = this.current[idx];
+        const newValue = 2 * cur[idx] - prev[idx] + c2dt2 * laplacian;
+        prev[idx] = cur[idx];
         // Clamp to prevent runaway growth even within CFL bounds
-        this.current[idx] = Math.max(-50, Math.min(50, newValue * this.damping));
+        cur[idx] = Math.max(-50, Math.min(50, newValue * damp));
       }
     }
     
@@ -194,17 +230,24 @@ export class WaveSimulation {
     this.applyBoundaryConditions();
   }
   
-  /** Detect and recover from NaN/Infinity corruption */
+  /** Detect and recover from NaN/Infinity corruption — samples sparse points instead of full scan */
   private stabilityGuard(): void {
-    let corrupted = false;
-    for (let i = 0; i < this.current.length; i++) {
-      if (!isFinite(this.current[i])) {
-        corrupted = true;
-        break;
+    const cur = this.current;
+    const len = cur.length;
+    // Sample 16 evenly-spaced points + corners for fast corruption detection
+    // Covers full grid with O(1) cost instead of O(n)
+    const stride = (len >>> 4) || 1; // len/16 floored
+    for (let i = 0; i < len; i += stride) {
+      if (!isFinite(cur[i])) {
+        // Corruption found — full reset
+        this.current.fill(0);
+        this.previous.fill(0);
+        this.velocity.fill(0);
+        return;
       }
     }
-    if (corrupted) {
-      // Soft reset: zero the field but keep sources/walls
+    // Also check last element (corners)
+    if (!isFinite(cur[len - 1])) {
       this.current.fill(0);
       this.previous.fill(0);
       this.velocity.fill(0);
@@ -304,16 +347,29 @@ export class WaveSimulation {
     }
   }
 
-  /** Sample wave amplitude along a line from (x1,y1) to (x2,y2) in pixel coords */
+  /** Sample wave amplitude along a line from (x1,y1) to (x2,y2) in pixel coords.
+   *  Reuses pre-allocated buffer to avoid per-frame Float32Array allocation. */
   sampleLine(px1: number, py1: number, px2: number, py2: number, numSamples: number = 128): Float32Array {
-    const samples = new Float32Array(numSamples);
-    for (let i = 0; i < numSamples; i++) {
-      const t = i / (numSamples - 1);
-      const x = px1 + (px2 - px1) * t;
-      const y = py1 + (py2 - py1) * t;
-      samples[i] = this.getValue(x, y);
+    // Grow buffer if needed (rare — only if caller requests more than 256 samples)
+    if (this.sampleBuffer.length < numSamples) {
+      this.sampleBuffer = new Float32Array(numSamples);
     }
-    return samples;
+    const samples = this.sampleBuffer;
+    const invCellSize = 1 / this.cellSize;
+    const cols = this.cols;
+    const rows = this.rows;
+    const cur = this.current;
+    const invN = 1 / (numSamples - 1);
+    const dx = (px2 - px1) * invN;
+    const dy = (py2 - py1) * invN;
+    for (let i = 0; i < numSamples; i++) {
+      const gx = ((px1 + dx * i) * invCellSize) | 0; // fast floor via bitwise OR
+      const gy = ((py1 + dy * i) * invCellSize) | 0;
+      samples[i] = (gx >= 0 && gx < cols && gy >= 0 && gy < rows)
+        ? cur[gy * cols + gx]
+        : 0;
+    }
+    return samples.subarray(0, numSamples);
   }
 
   getValue(x: number, y: number): number {

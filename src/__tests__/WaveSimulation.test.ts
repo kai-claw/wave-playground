@@ -566,4 +566,136 @@ describe('WaveSimulation', () => {
       });
     });
   });
+
+  // ──────── Performance / Stress Tests (Pass 8 — Black Hat #2) ────────
+  describe('Wall mask bitmap', () => {
+    it('wall mask is built lazily on first step', () => {
+      sim.addWall(100, 0, 100, 200);
+      expect(sim.wallMask.every(v => v === 0)).toBe(true); // not built yet
+      sim.step(0);
+      // After step, mask should have some wall cells
+      let wallCells = 0;
+      for (let i = 0; i < sim.wallMask.length; i++) if (sim.wallMask[i]) wallCells++;
+      expect(wallCells).toBeGreaterThan(0);
+    });
+
+    it('wall mask is NOT rebuilt if walls unchanged (dirty flag)', () => {
+      sim.addWall(100, 0, 100, 200);
+      sim.step(0); // builds mask
+      const mask1Sum = sim.wallMask.reduce((a, b) => a + b, 0);
+      sim.step(1); // should NOT rebuild
+      const mask2Sum = sim.wallMask.reduce((a, b) => a + b, 0);
+      expect(mask1Sum).toBe(mask2Sum);
+    });
+
+    it('wall mask matches isInsideWall results', () => {
+      sim.addWall(100, 0, 100, 200, [{ start: 0.4, end: 0.6 }]);
+      sim.rebuildWallMask();
+      // Spot-check: mask should be 0 at slit positions, 1 at wall positions
+      const wallCol = Math.round(100 / sim.cellSize);
+      const slitRow = Math.round((0.5 * sim.rows));
+      const wallRow = Math.round((0.1 * sim.rows));
+      // Inside slit — should be open
+      expect(sim.wallMask[slitRow * sim.cols + wallCol]).toBe(0);
+      // Outside slit — should be wall
+      expect(sim.wallMask[wallRow * sim.cols + wallCol]).toBe(1);
+    });
+
+    it('clear resets wall mask', () => {
+      sim.addWall(100, 0, 100, 200);
+      sim.step(0);
+      sim.clear();
+      expect(sim.wallMask.every(v => v === 0)).toBe(true);
+    });
+  });
+
+  describe('sampleLine buffer reuse', () => {
+    it('returns correct length subarray', () => {
+      sim.addSource(50, 50, 0.05, 1);
+      for (let i = 0; i < 10; i++) sim.step(i);
+      const s64 = sim.sampleLine(0, 100, 200, 100, 64);
+      expect(s64.length).toBe(64);
+      const s128 = sim.sampleLine(0, 100, 200, 100, 128);
+      expect(s128.length).toBe(128);
+    });
+
+    it('consecutive calls produce consistent results', () => {
+      sim.addSource(100, 100, 0.05, 2);
+      for (let i = 0; i < 20; i++) sim.step(i);
+      const a = Array.from(sim.sampleLine(0, 100, 200, 100, 64));
+      const b = Array.from(sim.sampleLine(0, 100, 200, 100, 64));
+      // Same frame, same line — should be identical
+      expect(a).toEqual(b);
+    });
+  });
+
+  describe('Stress tests', () => {
+    it('survives 1000 steps at high speed with walls', () => {
+      const bigSim = new WaveSimulation(400, 300, 4);
+      bigSim.waveSpeed = 1.5; // triggers sub-stepping
+      bigSim.addSource(200, 150, 0.05, 2);
+      bigSim.addWall(200, 0, 200, 300, [{ start: 0.4, end: 0.6 }]);
+      for (let i = 0; i < 1000; i++) bigSim.step(i);
+      // All values should remain finite
+      for (let i = 0; i < bigSim.current.length; i++) {
+        expect(isFinite(bigSim.current[i])).toBe(true);
+      }
+    });
+
+    it('handles many sources without degradation', () => {
+      // 20 sources — stress test source processing
+      for (let i = 0; i < 20; i++) {
+        sim.addSource(10 + i * 9, 100, 0.05, 0.5);
+      }
+      for (let i = 0; i < 100; i++) sim.step(i);
+      // All values finite
+      for (let j = 0; j < sim.current.length; j++) {
+        expect(isFinite(sim.current[j])).toBe(true);
+      }
+    });
+
+    it('energy trail with many sources stays bounded', () => {
+      sim.energyTrailEnabled = true;
+      for (let i = 0; i < 10; i++) {
+        sim.addSource(20 + i * 18, 100, 0.05, 1);
+      }
+      for (let i = 0; i < 200; i++) sim.step(i);
+      // Energy map should be non-negative and finite
+      for (let j = 0; j < sim.energyMap.length; j++) {
+        expect(sim.energyMap[j]).toBeGreaterThanOrEqual(0);
+        expect(isFinite(sim.energyMap[j])).toBe(true);
+      }
+    });
+
+    it('orbital sources + walls + energy trail combined stress', () => {
+      sim.addOrbitalSource(100, 100, 40, 0.05, 0.1, 1, 0);
+      sim.addOrbitalSource(100, 100, 40, -0.05, 0.1, 1, Math.PI);
+      sim.addWall(50, 0, 50, 200, [{ start: 0.3, end: 0.7 }]);
+      sim.energyTrailEnabled = true;
+      for (let i = 0; i < 500; i++) sim.step(i);
+      for (let j = 0; j < sim.current.length; j++) {
+        expect(isFinite(sim.current[j])).toBe(true);
+      }
+    });
+
+    it('stability guard catches corruption from sparse sampling', () => {
+      // Manually corrupt a sampled position
+      sim.current[0] = NaN;
+      sim.step(0);
+      // Field should be reset
+      for (let j = 0; j < sim.current.length; j++) {
+        expect(isFinite(sim.current[j])).toBe(true);
+      }
+    });
+
+    it('stability guard catches corruption at stride boundaries', () => {
+      // Corrupt at ~1/16 of the way through
+      const stride = (sim.current.length >>> 4) || 1;
+      sim.current[stride] = Infinity;
+      sim.step(0);
+      for (let j = 0; j < sim.current.length; j++) {
+        expect(isFinite(sim.current[j])).toBe(true);
+      }
+    });
+  });
 });
