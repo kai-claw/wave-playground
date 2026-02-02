@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kai-claw.github.io/wave-playground/sitemap.xml

@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0a0e1a" />
+  <title>404 — Wave Playground</title>
+  <style>
+    body { margin:0; background:#0a0e1a; color:#4fc3f7; font-family:system-ui; display:flex; justify-content:center; align-items:center; height:100vh; text-align:center; }
+    h1 { font-size:3rem; margin-bottom:1rem; }
+    p { color:#888; margin-bottom:2rem; }
+    a { color:#4fc3f7; text-decoration:none; border:1px solid #4fc3f7; padding:10px 24px; border-radius:8px; }
+    a:hover { background:rgba(79,195,247,0.15); }
+  </style>
+  <script>
+    // SPA redirect for GitHub Pages
+    const path = window.location.pathname;
+    if (path !== '/wave-playground/' && path !== '/wave-playground') {
+      window.location.replace('/wave-playground/');
+    }
+  </script>
+</head>
+<body>
+  <div>
+    <h1>🌊 404</h1>
+    <p>This wave dissipated into the void.</p>
+    <a href="/wave-playground/">Back to Wave Playground</a>
+  </div>
+  <noscript>
+    <div style="position:absolute;inset:0;display:flex;justify-content:center;align-items:center;">
+      <p>Please enable JavaScript or navigate to <a href="/wave-playground/">Wave Playground</a>.</p>
+    </div>
+  </noscript>
+</body>
+</html>
